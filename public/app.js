@@ -1913,12 +1913,28 @@ const EDIT_FIELDS = [/^id$/, /^name$/, /^owner$/, /^description$/, /^target_date
 const JIRA_KEY = /^[A-Z][A-Z0-9_]{0,29}-[1-9]\d{0,9}$/;
 const jiraKeys = (text) => [...new Set(String(text || '').split(/[\s,]+/).map((x) => x.trim().toUpperCase()).filter(Boolean))];
 const badJira = (text) => jiraKeys(text).filter((k) => !JIRA_KEY.test(k));
+// GitHub PRs and issues pasted into a step, as links (https://github.com/owner/repo/pull/12 or
+// …/issues/7, extra parts like /files are fine). Returns { links: [evidence], bad: [text] }.
+const GH_LINK = /^https?:\/\/[^/\s]+\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/(\d+)(?:[/?#]\S*)?$/i;
+function ghLinks(text) {
+  const links = [], bad = [], seen = new Set();
+  for (const raw of String(text || '').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean)) {
+    const m = GH_LINK.exec(raw);
+    if (!m || Number(m[3]) < 1) { bad.push(raw); continue; }
+    const e = { source: 'github', type: m[2].toLowerCase() === 'pull' ? 'pr' : 'issue', repo: m[1], number: Number(m[3]) };
+    const key = `${e.type}:${e.repo.toLowerCase()}#${e.number}`;
+    if (!seen.has(key)) { seen.add(key); links.push(e); }
+  }
+  return { links, bad };
+}
 const editInvalidPrefix = (prefix) => (featureEdit.errors || []).some((e) => e.field.startsWith(prefix));
-function jiraMessages(at, text) {
-  const bad = badJira(text);
+// Problems with what was typed into a step's link fields (checked here as you type, and by the server).
+function linkMessages(at, jira, github) {
+  const bad = badJira(jira);
+  const badGh = ghLinks(github).bad;
   const errs = (featureEdit.errors || []).filter((e) => e.field.startsWith(`${at}.evidence`));
-  if (!bad.length && !errs.length) return '';
-  return `<div class="ferrs" id="err-${esc(at)}-jira" role="alert">${bad.length ? `<p class="ferr">Not a Jira ticket key: ${esc(bad.join(', '))} (expected something like ABC-123).</p>` : ''}${errs.map((e) => `<p class="ferr">${esc(e.message)}</p>`).join('')}</div>`;
+  if (!bad.length && !badGh.length && !errs.length) return '';
+  return `<div class="ferrs" id="err-${esc(at)}-links" role="alert">${badGh.length ? `<p class="ferr">Not a GitHub pull request or issue link: ${esc(badGh.join(', '))} (paste it from the browser, like https://github.com/your-org/your-repo/pull/12).</p>` : ''}${bad.length ? `<p class="ferr">Not a Jira ticket key: ${esc(bad.join(', '))} (expected something like ABC-123).</p>` : ''}${errs.map((e) => `<p class="ferr">${esc(e.message)}</p>`).join('')}</div>`;
 }
 
 function stepRow(s, i, n) {
@@ -1936,9 +1952,10 @@ function stepRow(s, i, n) {
     ${editMessages(`${at}.done_when`)}
     ${s.linked?.length ? `<p class="muted small">Linked: ${s.linked.map((x) => `<span class="mono">${esc(x)}</span>`).join(', ')} <span class="muted">(kept as they are)</span></p>`
       : s.evidence ? `<p class="muted small">${s.evidence} linked PR, issue or ticket${s.evidence === 1 ? '' : 's'} kept as they are.</p>` : ''}
-    <label>Link Jira tickets <span class="muted small">optional, comma separated</span><input name="step_jira" value="${esc(s.add_jira || '')}" placeholder="ABC-123, ABC-124" class="mono" autocapitalize="characters" spellcheck="false"${badJira(s.add_jira).length || editInvalidPrefix(`${at}.evidence`) ? ` aria-invalid="true" aria-describedby="err-${esc(at)}-jira"` : ''}>
-      <span class="muted small">The step counts as done when every linked ticket is Done or Closed (and every linked PR or issue is done).</span></label>
-    ${jiraMessages(at, s.add_jira)}</li>`;
+    <label>Link PRs or issues <span class="muted small">optional; paste GitHub links, separated by spaces or commas</span><input name="step_github" value="${esc(s.add_github || '')}" placeholder="https://github.com/your-org/your-repo/pull/12" class="mono" spellcheck="false" autocomplete="off"${ghLinks(s.add_github).bad.length || editInvalidPrefix(`${at}.evidence`) ? ` aria-invalid="true" aria-describedby="err-${esc(at)}-links"` : ''}></label>
+    <label>Link Jira tickets <span class="muted small">optional, comma separated</span><input name="step_jira" value="${esc(s.add_jira || '')}" placeholder="ABC-123, ABC-124" class="mono" autocapitalize="characters" spellcheck="false"${badJira(s.add_jira).length || editInvalidPrefix(`${at}.evidence`) ? ` aria-invalid="true" aria-describedby="err-${esc(at)}-links"` : ''}>
+      <span class="muted small">The step counts as done when every linked PR is merged, every linked issue is closed as completed, and every linked ticket is Done or Closed.</span></label>
+    ${linkMessages(at, s.add_jira, s.add_github)}</li>`;
 }
 
 function renderFeatureEdit(mode, id, project = '') {
@@ -2020,9 +2037,10 @@ function readFeatureForm(form) {
     const v = (n) => li.querySelector(`[name="${n}"]`)?.value || '';
     const old = featureEdit.draft.steps[i] || {};
     const jira = v('step_jira');
+    const github = v('step_github');
     return { id: v('step_id') || slugify(v('step_name')), name: v('step_name'), owner: v('step_owner'), team: v('step_team'), done_when: v('step_done_when'),
-      evidence: old.evidence || 0, linked: old.linked || [], add_jira: jira,
-      add_evidence: jiraKeys(jira).map((key) => ({ source: 'jira', type: 'ticket', key })) };
+      evidence: old.evidence || 0, linked: old.linked || [], add_jira: jira, add_github: github,
+      add_evidence: [...ghLinks(github).links, ...jiraKeys(jira).map((key) => ({ source: 'jira', type: 'ticket', key }))] };
   });
   return {
     id: featureEdit.mode === 'create' ? String(fd.get('id') || '').trim() : featureEdit.id,
@@ -2115,7 +2133,7 @@ function wireFeatureEdit(root) {
   form.addEventListener('submit', (e) => { e.preventDefault(); sync(); previewFeature(); });
   form.querySelector('[data-step-add]')?.addEventListener('click', () => {
     sync();
-    f.draft.steps.push({ id: '', name: '', owner: '', team: '', done_when: '', evidence: 0, linked: [], add_jira: '', add_evidence: [] });
+    f.draft.steps.push({ id: '', name: '', owner: '', team: '', done_when: '', evidence: 0, linked: [], add_jira: '', add_github: '', add_evidence: [] });
     render();
     $('#main [data-step]:last-of-type [name="step_name"]')?.focus();
   });
@@ -2779,7 +2797,7 @@ function pathCheckpoints(f) {
     [srcLine(sourceOf(f, `step:${s.id}`)), ...s.evidence.filter((e) => e.type === 'pr').map((e) => srcLine(sourceOf(f, `actions:${e.repo}#${e.number}`)))].concat(s.linked_work ? s.evidence.map((e) => (e.source === 'jira'
       ? evRow('jira.ticket', `${e.key} ${e.title || ''}`.trim(), e.state, ['Jira', e.detail || e.state, e.from_snapshot ? `from team snapshot, read ${ago(e.last_successful_read_at)}` : '', s.done_when ? `done when: ${s.done_when}` : ''].filter(Boolean), e.link)
       : evRow(`github.${e.type}`, `#${e.number} ${e.title || e.repo}`, e.state, [`${e.repo}`, e.detail || e.state, s.done_when ? `done when: ${s.done_when}` : ''].filter(Boolean), e.link)))
-      : [`<p class="f-nolink">No tasks linked yet: add the PR or issue for this step in the definition.</p>`])));
+      : [`<p class="f-nolink">No tasks linked yet: in <b>Edit feature</b>, paste this step's PR or issue (or its Jira ticket).</p>`])));
   const lm = f.last_mile;
   if (lm && lm.state !== 'not_tracked') {
     for (const [env, label] of ENVS) {

@@ -395,3 +395,20 @@ test('editing one field of a hand-written app leaves the rest of the file as it 
   assert.equal(r.status, 200, r.body.message);
   assert.equal(repoFile('apps/shelf-app.yaml'), `${text}release_channel:\n  slack: "#shelf-releases"\n`);
 });
+
+test('linking a PR to a step from the form: written as evidence, read live, an invalid repo refused', async () => {
+  gh.state.prs.set(`${APP}#21`, { title: 'Wish links API', state: 'closed', merged_at: '2026-11-10T10:00:00Z' });
+  gh.state.files.get(DATA).set('features/wish-links.yaml', 'id: wish-links\nname: Wish links\nowner: Wishlist team\nsteps:\n  - id: development\n    name: Development\n    owner: "@wish-dev"\n    done_when: API merged to main\n');
+  await ana.get('/api/roadmap');
+  const def = await ana.open('wish-links');
+  const step = { id: 'development', name: 'Development', owner: '@wish-dev', team: '', done_when: 'API merged to main',
+    add_evidence: [{ source: 'github', type: 'pr', repo: APP, number: 21 }] };
+  const bad = await ana.put('/api/features/wish-links', { draft: { ...def.draft, steps: [{ ...step, add_evidence: [{ source: 'github', type: 'pr', repo: 'not a repo', number: 3 }] }] }, base_hash: def.base_hash });
+  assert.equal(bad.status, 400, JSON.stringify(bad.body));
+  assert.match(bad.body.errors[0].field, /^steps\[0\]\.evidence/);
+  const r = await ana.put('/api/features/wish-links', { draft: { ...def.draft, steps: [step] }, base_hash: def.base_hash });
+  assert.equal(r.status, 200, r.body.message);
+  assert.match(repoFile('features/wish-links.yaml'), /evidence:\n\s+- \{ ?source: github, type: pr, repo: team\/catalog, number: 21 ?\}/);
+  const s = await bo.get('/api/features/wish-links/status');
+  assert.equal(s.steps[0].state, 'done', 'the merged PR makes the step done');
+});
