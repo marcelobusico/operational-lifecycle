@@ -41,8 +41,20 @@ HOME_SHOWN="$(short "$LC_HOME")"
 
 say() { printf '%s\n' "$*"; }
 die() { printf '✗ %s\n' "$1" >&2; [ -n "${2:-}" ] && printf '  What to do: %s\n' "$2" >&2; exit 1; }
+# Libraries missing: usually the command was run from a downloaded or cloned copy instead of the
+# installed one (~/.lifecycle/bin/lifecycle), or an install stopped before its libraries step.
+need_libs() {
+  [ -d "$APP/node_modules/yaml" ] && return 0
+  if [ "$(cd "$APP" && pwd -P)" != "$(cd "$LC_HOME/app" 2>/dev/null && pwd -P)" ]; then
+    if [ -x "$LC_HOME/bin/lifecycle" ]; then
+      die "This copy of LifeCycle ($(short "$APP")) is a download or clone, not your installed LifeCycle, and has no libraries." "Use the installed command: $CMD ${1:-<command>}   (to develop in this copy, run npm install in it first)"
+    fi
+    die "This copy of LifeCycle ($(short "$APP")) is not installed yet." "Install it: cd $(short "$APP") && ./install.sh"
+  fi
+  die "LifeCycle's libraries are missing ($(short "$APP/node_modules"))." "Run the installer again: bash $(short "$APP/install.sh")"
+}
 need_node() {
-  [ -x "$NODE" ] && return 0
+  if [ -x "$NODE" ]; then need_libs "${COMMAND:-}"; return 0; fi
   [ -n "$OWN_NODE" ] && die "The Node.js LifeCycle was set to use is gone ($NODE)." "Run the installer again with the Node.js to use, for example: LIFECYCLE_NODE=system bash $(short "$APP/install.sh")   (or LIFECYCLE_NODE=/path/to/node, or LIFECYCLE_NODE=private for LifeCycle's own copy)"
   die "LifeCycle's Node.js is missing ($NODE)." "Run the installer again: bash <unzipped LifeCycle folder>/install.sh"
 }
@@ -247,6 +259,7 @@ Type it as: $CMD <command>
 EOF
 }
 
+COMMAND="${1:-}"
 case "${1:-}" in
   open) cmd_open ;;
   start) cmd_start ;;

@@ -6,7 +6,7 @@ import readline from 'node:readline';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { loadConfig, saveConfig, saveCredentials, paths, homeDir, githubToken, flagsmithKey, statsigKey, aiKey, storeCredentials, findGhCli, findCli } from '../config.js';
+import { loadConfig, saveConfig, saveCredentials, paths, homeDir, githubToken, githubAccess, ghConfigDir, ghWorksAtLogin, flagsmithKey, statsigKey, aiKey, storeCredentials, findGhCli, findCli } from '../config.js';
 import { normalizeSiteUrl } from '../sources/jira.js';
 import { createAppStoreConnector, ACCESS_NEEDED } from '../stores/app-store.js';
 import { createStatsigConnection, wrongKeyMessage, statsigKeyKind, CONSOLE_KEYS_URL } from '../sources/statsig.js';
@@ -59,6 +59,22 @@ async function askSecret(question) {
 
 // The GitHub CLI's full path when it is installed and signed in, else null. The full path is saved
 // because LifeCycle runs at login with a minimal PATH that may not include where gh lives.
+const GH_ENV_ONLY = [
+  '   ! gh works in this Terminal only through GITHUB_TOKEN (or GH_TOKEN). LifeCycle runs at login without',
+  '     your Terminal\'s environment, so it would have no GitHub access. Give gh its own login, then run setup again:',
+  '       env -u GITHUB_TOKEN -u GH_TOKEN gh auth login',
+  '     Or type n below and paste a token instead.',
+];
+
+function hasSavedGithubAccess() {
+  try {
+    const c = JSON.parse(fs.readFileSync(paths.credentials(), 'utf8'));
+    return Boolean(c?.github?.token || c?.github?.useGhCli);
+  } catch {
+    return false;
+  }
+}
+
 function ghCliPath() {
   const gh = findGhCli();
   if (!gh) return null;
@@ -108,15 +124,25 @@ async function setupGithub(config) {
   console.log('\n2. GitHub access');
   console.log('   LifeCycle reads your team\'s features, issues and pull requests on GitHub as you.');
   console.log(`   Your access is saved only on this Mac (${paths.credentials()}, readable only by you).`);
-  if (githubToken()) {
+  // Access that only exists in this Terminal (GITHUB_TOKEN in the shell, nothing saved) doesn't count:
+  // LifeCycle at login wouldn't have it.
+  const saved = githubAccess().source;
+  const envOnly = githubToken() && /environment/.test(githubAccess().source || '') && !hasSavedGithubAccess();
+  if (envOnly) {
+    console.log(`   You are connected here through ${saved}, but only in this Terminal: LifeCycle runs at login`);
+    console.log('   without it. Choose how LifeCycle connects on its own:');
+  } else if (githubToken()) {
     const keep = await ask('   You are already connected to GitHub. Press Return to keep that, or type n to change it', 'y');
     if (!/^n/i.test(keep)) return verifyGithub(config, githubToken(), apiUrl);
   }
   const ghPath = ghCliPath();
   if (ghPath) {
-    const useGh = await ask('   The GitHub command-line app (gh) is signed in on this Mac. Press Return to use it, or type n to paste a token instead', 'y');
+    const atLogin = ghWorksAtLogin(ghPath);
+    if (!atLogin) for (const line of GH_ENV_ONLY) console.log(line);
+    const useGh = await ask(`   The GitHub command-line app (gh) is signed in on this Mac. Press Return to use it${atLogin ? '' : ' anyway'}, or type n to paste a token instead`, atLogin ? 'y' : 'n');
     if (!/^n/i.test(useGh)) {
-      saveCredentials({ github: { useGhCli: true, ghPath } });
+      const dir = ghConfigDir();
+      saveCredentials({ github: { useGhCli: true, ghPath, ...(dir ? { ghConfigDir: dir } : {}) } });
       return verifyGithub(config, githubToken(), apiUrl);
     }
   }
@@ -412,7 +438,8 @@ async function setupFlagsmith(config) {
 
 // Ask & digest: which AI provider answers on this machine. The key stays in credentials.json.
 async function setupAi(config) {
-  console.log('\nAI provider for "ask" and the digest (claude, openai-compatible, command, none).');
+  console.log('\nAI provider for "ask", the digest and the feature review (claude, claude-code, openai-compatible, command, none).');
+  console.log('claude-code uses your Claude Code login (no API key); claude needs an Anthropic API key.');
   console.log('Answers are always built from LifeCycle\'s own data; the AI only reads the question and writes the first line.');
   const provider = await ask('Provider', config.ai.provider);
   config.ai.provider = provider;
@@ -421,6 +448,11 @@ async function setupAi(config) {
     const key = await askSecret(existing ? 'Anthropic API key (input hidden; Enter keeps the current one)' : 'Anthropic API key (input hidden; Enter skips: answers use LifeCycle\'s rules until you add one)');
     if (key) saveCredentials({ ai: { claude: { apiKey: key } } });
     config.ai.model = (await ask('Model (Enter for the default)', config.ai.model || '')) || null;
+  } else if (provider === 'claude-code') {
+    const bin = findCli('claude');
+    if (bin) console.log(`✓ Claude Code found (${bin}). It answers with your Claude login, with no tools or connectors.`);
+    else console.log('! Claude Code was not found. Install it and sign in (run "claude" once in Terminal); until then answers use LifeCycle\'s rules.');
+    config.ai.model = (await ask('Model (Enter for Claude Code\'s default)', config.ai.model || '')) || null;
   } else if (provider === 'openai-compatible') {
     config.ai.apiUrl = await ask('Base URL (e.g. http://localhost:11434/v1)', config.ai.apiUrl || '');
     config.ai.model = await ask('Model', config.ai.model || '');

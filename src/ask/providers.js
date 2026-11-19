@@ -9,6 +9,8 @@
 //
 // Providers:
 //   claude             Anthropic API (default). Key: ANTHROPIC_API_KEY or `npm run setup`.
+//   claude-code        Claude Code (`claude -p`) with the person's own Claude login: no API key. Runs with no
+//                      tools or connectors (src/claude-run.js), since the prompt holds everything it needs.
 //   openai-compatible  Any /chat/completions endpoint (Azure OpenAI, Ollama, LM Studio, a company gateway…).
 //   command            A local CLI of your own that reads the prompt on stdin and prints JSON, e.g. ["claude", "-p"].
 //   none               LifeCycle's rules only, no AI.
@@ -16,9 +18,12 @@ import { spawn } from 'node:child_process';
 import Anthropic from '@anthropic-ai/sdk';
 import { aiKey } from '../config.js';
 import { registerSecret } from '../log.js';
+import { runClaude } from '../claude-run.js';
 import { rulesInterpreter, INTENTS } from './answer.js';
 
-export const PROVIDERS = ['claude', 'openai-compatible', 'command', 'none'];
+export const PROVIDERS = ['claude', 'claude-code', 'openai-compatible', 'command', 'none'];
+// What to do when a provider rejects its key (HTTP 401).
+const KEY_REJECTED = (who) => `${who} rejected the API key (HTTP 401: wrong, revoked, or not an API key). Set a new one with \`lifecycle setup --extras\`, or use the AI provider "claude-code" (your Claude Code login, no key)`;
 export const CLAUDE_DEFAULT_MODEL = 'claude-opus-5-5';
 
 const INTERPRET_SYSTEM = [
@@ -119,12 +124,16 @@ function claudeProvider(config) {
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     return parseJson(text);
   }
+  const guarded = (system, user, schema) => call(system, user, schema).catch((err) => {
+    if (err?.status === 401) throw new Error(KEY_REJECTED('Anthropic'));
+    throw err;
+  });
   return {
     name: 'claude',
     model,
-    interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input), INTERPRET_SCHEMA),
-    lead: (input) => call(LEAD_SYSTEM, leadPrompt(input), LEAD_SCHEMA),
-    review: ({ system, prompt }) => call(system, prompt, REVIEW_SCHEMA),
+    interpret: (input) => guarded(INTERPRET_SYSTEM, interpretPrompt(input), INTERPRET_SCHEMA),
+    lead: (input) => guarded(LEAD_SYSTEM, leadPrompt(input), LEAD_SCHEMA),
+    review: ({ system, prompt }) => guarded(system, prompt, REVIEW_SCHEMA),
   };
 }
 
@@ -141,6 +150,7 @@ function openAiCompatibleProvider(config, { fetchImpl = fetch } = {}) {
       body: JSON.stringify({ model, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
       signal: AbortSignal.timeout(config.ai.timeoutMs),
     });
+    if (res.status === 401) throw new Error(KEY_REJECTED('The AI provider'));
     if (!res.ok) throw new Error(`the provider answered HTTP ${res.status}`);
     const body = await res.json();
     return parseJson(body.choices?.[0]?.message?.content);
@@ -181,10 +191,26 @@ function commandProvider(config) {
   };
 }
 
+// Claude Code with the person's own login. ai.command overrides the command (default claude -p);
+// ai.model is passed as --model. Claude Code takes a few seconds to start, so at least 2 minutes.
+function claudeCodeProvider(config, { run = runClaude } = {}) {
+  const cfg = { command: Array.isArray(config.ai.command) && config.ai.command.length ? config.ai.command : ['claude', '-p'],
+    timeoutMs: Math.max(config.ai.timeoutMs || 0, 120000) };
+  const call = async (system, user) => parseJson(await run(cfg, `${system}\n\n${user}`, { what: 'the AI answer', noTools: true, model: config.ai.model || null }));
+  return {
+    name: 'claude-code',
+    model: config.ai.model || 'Claude Code default',
+    interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
+    lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
+    review: ({ system, prompt }) => call(system, prompt),
+  };
+}
+
 // The provider named in the local config. An unknown name falls back to rules and says so.
 export function createProvider(config, opts = {}) {
   const name = config.ai?.provider || 'claude';
   if (name === 'claude') return claudeProvider(config);
+  if (name === 'claude-code') return claudeCodeProvider(config, opts);
   if (name === 'openai-compatible') return openAiCompatibleProvider(config, opts);
   if (name === 'command') return commandProvider(config);
   if (name === 'none') return rulesInterpreter;

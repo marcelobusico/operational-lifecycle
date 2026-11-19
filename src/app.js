@@ -1,7 +1,7 @@
 // One refresh = read the definitions, then read every step's evidence live and compute statuses.
 // Nothing is kept between refreshes except the definitions cache and last-read times, so what a
 // person sees always comes from the sources at that moment.
-import { loadConfig, githubToken, flagsmithKey, statsigKey, storeCredentials as readStoreCredentials, appUrl, migrateSavedFlagPlatform, readNotices } from './config.js';
+import { loadConfig, githubToken, liveGithubToken, githubAccess, flagsmithKey, statsigKey, storeCredentials as readStoreCredentials, appUrl, migrateSavedFlagPlatform, readNotices } from './config.js';
 import { resolveFlagPlatform, chosenFlagPlatform, teamFlagPlatform, FLAG_PLATFORM_NAME } from './team.js';
 import { createGithubClient } from './sources/github-client.js';
 import { createEvidenceReader } from './sources/index.js';
@@ -62,16 +62,19 @@ export function definitionsNotice(d) {
 // storeCredentials: per-store credentials (src/config.js storeCredentials()). storeConnectors: extra
 // store connectors by store id (src/stores/index.js), used to plug in a store not built in yet.
 // slackRun / jiraRun: replace the Claude Code calls that read Slack release channels and Jira (tests).
-export function createApp({ config = loadConfig(), token = githubToken(), flagsmithApiKey = flagsmithKey(), statsigApiKey = statsigKey(), storeCredentials = readStoreCredentials(), storeConnectors = {}, fetchImpl, slackRun, jiraRun } = {}) {
+export function createApp({ config = loadConfig(), token, flagsmithApiKey = flagsmithKey(), statsigApiKey = statsigKey(), storeCredentials = readStoreCredentials(), storeConnectors = {}, fetchImpl, slackRun, jiraRun } = {}) {
   let inFlight = null;
   let queued = null;
   let lastSnap = null;
   let published = null; // the latest commit LifeCycle itself made in the shared repo (feature, team, change edit)
   let lastDefs = null; // { featureDefs, projects, services, changes, invalidIds, files } from the latest refresh, for publishing
+  // The token is read again while the app runs (src/config.js liveGithubToken); tests pass a fixed one.
+  const githubTokenNow = token !== undefined ? () => token : liveGithubToken();
   const client = createGithubClient({
     apiUrl: config.sources.github.apiUrl,
     enabled: config.sources.github.enabled,
-    token,
+    token: githubTokenNow,
+    access: token !== undefined ? null : githubAccess,
     fetchImpl,
   });
   // Every commit LifeCycle makes to the shared repo goes through here, so the next definitions read
@@ -146,7 +149,7 @@ export function createApp({ config = loadConfig(), token = githubToken(), flagsm
       config.flagPlatformSource = 'team';
     }
     const flagPlatform = resolveFlagPlatform(config, parsed.team);
-    const reader = createEvidenceReader({ config, tokens: { github: token }, fetchImpl, jiraSnapshots, jiraRun });
+    const reader = createEvidenceReader({ config, tokens: { github: githubTokenNow }, fetchImpl, jiraSnapshots, jiraRun });
     await reader.prefetch(features);
     const statuses = await computeStatuses({ features, projects, invalidIds, read: reader.read, definitions });
     reader.save();
