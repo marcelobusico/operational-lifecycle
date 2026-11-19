@@ -392,3 +392,18 @@ test('GitHub access through gh still works when LifeCycle runs with a minimal PA
   const old = await run(process.execPath, ['--input-type=module', '-e', script], { env });
   assert.equal(old.stdout, 'gho_from_fake_gh', old.all);
 });
+
+test('the lifecycle command run from a downloaded or cloned copy with no libraries points to the installed one', async () => {
+  const home = tmp('home');
+  const copy = tmp('copy');
+  execFileSync('sh', ['-c', `cd "${ROOT}" && tar --exclude ./node_modules --exclude ./.git -cf - bin src package.json | (cd "${copy}" && tar -xf -)`]);
+  const lc = path.join(home, '.lifecycle');
+  fs.mkdirSync(path.join(lc, 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(lc, 'runtime', 'node', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(lc, 'runtime', 'node', 'bin', 'node'), `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(lc, 'bin', 'lifecycle'), '#!/bin/sh\n', { mode: 0o755 });
+  const r = await run('bash', [path.join(copy, 'bin', 'lifecycle'), 'setup'], { env: { HOME: home, PATH: '/usr/bin:/bin' } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /is a download or clone, not your installed LifeCycle, and has no libraries\.\n  What to do: Use the installed command: ~\/\.lifecycle\/bin\/lifecycle setup/, r.all);
+  assert.doesNotMatch(r.all, /ERR_MODULE_NOT_FOUND/);
+});

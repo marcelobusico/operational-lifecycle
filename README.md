@@ -189,9 +189,11 @@ what's blocked, what's at risk of missing its date, and what changed in flags, d
 changes and alerts since your last digest. Follow features from their page. Your owner names
 (`me.owners`, asked by `npm run setup`) decide which features count as yours.
 
-**AI provider**: set in `~/.lifecycle/config.json` (`ai.provider`): `claude` (default), any
-`openai-compatible` endpoint, a local `command`, or `none`. `npm run setup` asks for it; the key is
-saved only in `~/.lifecycle/credentials.json`. Switching provider needs no code change.
+**AI provider**: set in `~/.lifecycle/config.json` (`ai.provider`): `claude` (default, an Anthropic
+API key), `claude-code` (your Claude Code login, no API key: `claude -p` with no tools or connectors),
+any `openai-compatible` endpoint, a local `command`, or `none`. `npm run setup` asks for it; a key is
+saved only in `~/.lifecycle/credentials.json`. Switching provider needs no code change. A rejected key
+(HTTP 401) is reported as such, with the fix.
 
 **From your AI tools** (Claude Code, Claude Desktop, any MCP client), same answers as the app:
 
@@ -316,6 +318,20 @@ the configured platform (never the other one), says what's wrong and gives the f
 | **Statsig refused your key** | The Console key was revoked, expired or is for another project. Create a new one and run setup again. |
 | **Statsig can't be reached** (with the last successful read time) | Nothing to change: check your connection; LifeCycle tries again on the next Refresh. |
 | **No Flagsmith project is chosen** / **Flagsmith environment not found** (Flagsmith teams only) | `npm run setup -- --extras` and pick the project or fix the QA/production environment names. |
+
+### GitHub access problems on a new Mac
+
+LifeCycle runs at login, **without your Terminal's environment**. Its GitHub access is, in order:
+`LIFECYCLE_GITHUB_TOKEN` / `GITHUB_TOKEN` (only when started from a Terminal that has them), the token
+saved by setup, or the GitHub CLI's login (`gh auth token`). It is read again while LifeCycle runs, so
+fixing it needs no restart (within 30 seconds).
+
+| Message | Fix |
+|---------|-----|
+| **No GitHub access works for LifeCycle right now (gh said: no oauth token found for github.com)** | gh works in your Terminal only through `GITHUB_TOKEN`. Give gh its own login: `env -u GITHUB_TOKEN gh auth login`, or paste a token with `lifecycle setup`. Setup warns about this case. |
+| **… isn't authorized for this organization's single sign-on** | Open the link in the message to authorize the token (for gh: `gh auth refresh -h github.com`). |
+| **Your GitHub credentials (…) can't read …** | Check the repo name (`dataRepo` in `~/.lifecycle/config.json`) and that this GitHub account was invited to it. |
+| **This copy of LifeCycle (…) is a download or clone, not your installed LifeCycle** | Run the installed command, `~/.lifecycle/bin/lifecycle`, not `bin/lifecycle` in the folder you downloaded. |
 
 Cards on Home never show a bare "Status unavailable": they say which source couldn't be read (or
 which definition is missing, e.g. no `services/<id>.yaml`) and when it was last read.

@@ -11,6 +11,8 @@
 //   --allowedTools <cfg.tools>    the read-only connector tools LifeCycle needs;
 //   --disallowedTools <WRITE>     the connectors' known write tools, refused even if allowed elsewhere.
 // It runs in LifeCycle's cache folder, outside any project, so no project instructions or settings apply.
+// noTools (the AI provider "claude-code": answers from the prompt alone): --tools "" and
+// --strict-mcp-config with no servers, so Claude has no tool or connector at all.
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -27,16 +29,19 @@ export const WRITE_TOOLS = [
     'createConfluencePage', 'updateConfluencePage', 'createConfluenceFooterComment', 'createConfluenceInlineComment'].map((t) => `mcp__atlassian__${t}`),
 ];
 
-// what: what is being read, for messages ("the Slack channel"). signIn: where to sign in ("Slack", "Atlassian").
-export function runClaude(cfg, prompt, { what, signIn }) {
+// what: what is being read, for messages ("the Slack channel"). signIn: where to sign in ("Slack",
+// "Atlassian"), or null when only the Claude Code login matters. model: optional --model.
+export function runClaude(cfg, prompt, { what, signIn = null, noTools = false, model = null }) {
   const cmd = Array.isArray(cfg.command) && cfg.command.length ? cfg.command : ['claude', '-p'];
   const bin = cmd[0].includes('/') ? cmd[0] : findCli(cmd[0]);
   const name = path.basename(cmd[0]);
   if (!bin) {
-    return Promise.reject(new SourceError('unreachable', `${name} isn't installed on this machine (or not where LifeCycle looks), so ${what} can't be read. Install Claude Code and sign in to ${signIn} in it, or turn this source off.`));
+    return Promise.reject(new SourceError('unreachable', `${name} isn't installed on this machine (or not where LifeCycle looks), so ${what} can't be read. Install Claude Code${signIn ? ` and sign in to ${signIn} in it, or turn this source off` : ' and sign in to it'}.`));
   }
-  const args = [...cmd.slice(1), '--tools', 'ToolSearch', '--permission-mode', 'dontAsk',
-    ...(cfg.tools?.length ? ['--allowedTools', cfg.tools.join(',')] : []), '--disallowedTools', WRITE_TOOLS.join(',')];
+  const args = noTools
+    ? [...cmd.slice(1), '--tools', '', '--strict-mcp-config', '--permission-mode', 'dontAsk', ...(model ? ['--model', model] : [])]
+    : [...cmd.slice(1), '--tools', 'ToolSearch', '--permission-mode', 'dontAsk',
+      ...(cfg.tools?.length ? ['--allowedTools', cfg.tools.join(',')] : []), '--disallowedTools', WRITE_TOOLS.join(',')];
   return new Promise((resolve, reject) => {
     fs.mkdirSync(paths.cacheDir(), { recursive: true });
     const child = spawn(bin, args, { cwd: paths.cacheDir(), stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
@@ -50,7 +55,7 @@ export function runClaude(cfg, prompt, { what, signIn }) {
       clearTimeout(timer);
       if (code !== 0) {
         const why = err.trim().split('\n').filter(Boolean).pop() || `exit code ${code}`;
-        return reject(new SourceError('unreachable', `${name} couldn't read ${what} (${why}). Check that it is signed in, and to ${signIn}: run ${name} and /mcp.`));
+        return reject(new SourceError('unreachable', `${name} couldn't read ${what} (${why}). ${signIn ? `Check that it is signed in, and to ${signIn}: run ${name} and /mcp.` : `Check that Claude Code is signed in: run ${name} once in Terminal.`}`));
       }
       resolve(out);
     });

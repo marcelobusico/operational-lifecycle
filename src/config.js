@@ -308,19 +308,53 @@ export function findCli(name, saved = null) {
 
 // Resolves the GitHub token: environment first, then the local credentials file, which either
 // holds a token or asks to reuse the GitHub CLI's login. Returns null when none is set up.
+// githubAccess() then says where it came from, and why none works, for messages.
+let lastAccess = { source: null, problem: 'no GitHub access is set up (run setup)' };
+export const githubAccess = () => lastAccess;
 export function githubToken() {
-  const fromEnv = process.env.LIFECYCLE_GITHUB_TOKEN || process.env.GITHUB_TOKEN;
-  if (fromEnv) return fromEnv.trim();
+  const found = (token, source, problem = null) => { lastAccess = { source, problem: token ? null : problem }; return token || null; };
+  if (process.env.LIFECYCLE_GITHUB_TOKEN) return found(process.env.LIFECYCLE_GITHUB_TOKEN.trim(), 'LIFECYCLE_GITHUB_TOKEN from the environment');
+  if (process.env.GITHUB_TOKEN) return found(process.env.GITHUB_TOKEN.trim(), 'GITHUB_TOKEN from the environment');
   const creds = readJson(paths.credentials());
-  if (creds?.github?.token) return creds.github.token.trim();
+  if (creds?.github?.token) return found(creds.github.token.trim(), 'the token saved by setup');
   if (creds?.github?.useGhCli) {
+    const source = 'the GitHub CLI (gh) login';
     const gh = findGhCli(creds.github.ghPath);
-    if (!gh) return null;
+    if (!gh) return found(null, source, 'gh is not installed where LifeCycle looks');
     try {
-      return execFileSync(gh, ['auth', 'token'], { encoding: 'utf8' }).trim() || null;
-    } catch {
-      return null;
+      // GH_CONFIG_DIR saved by setup: LifeCycle runs at login without the shell's environment.
+      const env = creds.github.ghConfigDir ? { ...process.env, GH_CONFIG_DIR: creds.github.ghConfigDir } : process.env;
+      const out = execFileSync(gh, ['auth', 'token'], { encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      return found(out, source, 'gh printed no token');
+    } catch (err) {
+      const said = String(err.stderr || err.message || '').trim().split('\n').filter(Boolean).pop() || 'gh auth token failed';
+      return found(null, source, `gh said: ${said}`);
     }
   }
-  return null;
+  return found(null, null, 'no GitHub access is set up (run setup)');
+}
+
+// gh's config folder when the shell moves it (GH_CONFIG_DIR, XDG_CONFIG_HOME), saved for LifeCycle
+// at login, which doesn't have the shell's environment.
+export const ghConfigDir = () => process.env.GH_CONFIG_DIR || (process.env.XDG_CONFIG_HOME ? path.join(process.env.XDG_CONFIG_HOME, 'gh') : null);
+
+// True when gh gives a token the way LifeCycle runs at login: no GITHUB_TOKEN / GH_TOKEN and a minimal
+// PATH, only HOME (and the saved config folder).
+export function ghWorksAtLogin(gh, configDir = ghConfigDir(), run = execFileSync) {
+  try {
+    const env = { HOME: process.env.HOME, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', ...(configDir ? { GH_CONFIG_DIR: configDir } : {}) };
+    return Boolean(String(run(gh, ['auth', 'token'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })).trim());
+  } catch {
+    return false;
+  }
+}
+// For a long-running LifeCycle: the token, read again every 5 minutes, and every 30 seconds while
+// none works (e.g. gh was logged in after LifeCycle started), so fixing access needs no restart.
+export function liveGithubToken(now = Date.now) {
+  let value = null;
+  let at = null; // when it was last read
+  return () => {
+    if (at === null || now() - at > (value ? 300000 : 30000)) { value = githubToken(); at = now(); }
+    return value;
+  };
 }
