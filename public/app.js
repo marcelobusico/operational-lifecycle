@@ -464,7 +464,7 @@ function renderProjectNew(editId = null) {
     <form id="projectform" class="cform section" novalidate><div class="card fbox">
       <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}" placeholder="Redeem rewards" autocomplete="off"${bad('name')}></label>${err('name')}
       <label>Id <span class="muted small">names the file and can't be changed later: lowercase letters, digits and dashes</span><input name="id" class="mono" value="${esc(d.id)}" placeholder="redeem-rewards"${bad('id')}></label>${err('id')}
-      <label>Owner <span class="muted small">optional</span><input name="owner" value="${esc(d.owner)}" placeholder="Catalog team or @handle"${bad('owner')}></label>${err('owner')}
+      <label>Owner <span class="muted small">optional</span><input name="owner" value="${esc(d.owner)}" placeholder="Catalog team or @handle" list="team-names" autocomplete="off"${bad('owner')}></label>${err('owner')}
       <label>Description <span class="muted small">optional</span><textarea name="description" rows="2"${bad('description')}>${esc(d.description)}</textarea></label>${err('description')}
       <div class="factions"><button class="btn primary" type="submit"${f.busy ? ' disabled' : ''}>${f.busy ? 'Creating…' : 'Create project'}</button><a class="btn" href="#/roadmap">Cancel</a></div>
     </div></form>`;
@@ -484,7 +484,7 @@ function renderProjectEdit(f, d) {
     ${f.result ? `<div class="banner st-blocked section" role="alert"><span class="ico">!</span><div>${esc(f.result.message || '')}</div></div>` : ''}
     <form id="projectform" class="cform section" novalidate><div class="card fbox">
       <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}" autocomplete="off"${bad('name')}></label>${err('name')}
-      <label>Owner <span class="muted small">optional</span><input name="owner" value="${esc(d.owner)}" placeholder="Catalog team or @handle"${bad('owner')}></label>${err('owner')}
+      <label>Owner <span class="muted small">optional</span><input name="owner" value="${esc(d.owner)}" placeholder="Catalog team or @handle" list="team-names" autocomplete="off"${bad('owner')}></label>${err('owner')}
       <label>Description <span class="muted small">optional</span><textarea name="description" rows="2"${bad('description')}>${esc(d.description)}</textarea></label>${err('description')}
       <div class="factions"><button class="btn primary" type="submit"${f.busy ? ' disabled' : ''}>${f.busy ? 'Saving…' : 'Save'}</button><a class="btn" href="${back}">Cancel</a></div>
     </div></form>`;
@@ -597,7 +597,7 @@ function renderAppEdit(id) {
     <form id="appform" class="cform section" novalidate><div class="card fbox">
       ${input('name', 'Name', '<span class="req">required</span>', ' placeholder="Reader" autocomplete="off"')}
       ${id ? '' : input('id', 'Id', '<span class="muted small">suggested from the name; names the file and can\'t be changed later</span>', ' class="mono" placeholder="reader-app"')}
-      <div class="row3">${input('owner', 'Owner', opt, ' placeholder="Mobile team"')}${input('repo', 'Repo', '<span class="req">required</span>', ' class="mono" placeholder="your-org/reader-mobile"')}</div>
+      <div class="row3">${input('owner', 'Owner', opt, ' placeholder="Mobile team" list="team-names" autocomplete="off"')}${input('repo', 'Repo', '<span class="req">required</span>', ' class="mono" placeholder="your-org/reader-mobile"')}</div>
       <fieldset class="fld"><legend>Stores <span class="muted small">at least one</span></legend>
         <div class="row3">${input('ios_store_id', 'iOS: App Store id', '<span class="muted small">the Apple ID number in App Store Connect</span>', ' class="mono" placeholder="1234567890"')}
         ${input('android_store_id', 'Android: Google Play package', '', ' class="mono" placeholder="com.yourorg.reader"')}</div>
@@ -1929,8 +1929,8 @@ function stepRow(s, i, n) {
         <button type="button" class="btn small" data-step-move="${i}:1" ${i === n - 1 ? 'disabled' : ''} aria-label="Move step ${i + 1} down">↓</button>
         <button type="button" class="btn small" data-step-remove="${i}" aria-label="Remove step ${i + 1}">Remove</button></div></div>
     ${editMessages(`${at}.name`)}${editMessages(`${at}.id`)}
-    <div class="row3"><label>Owner <span class="req">required</span><input name="step_owner" value="${esc(s.owner)}" placeholder="@handle or team"${editInvalid(`${at}.owner`)}></label>
-      <label>Team <span class="muted small">optional</span><input name="step_team" value="${esc(s.team)}" placeholder="Catalog team"${editInvalid(`${at}.team`)}></label></div>
+    <div class="row3"><label>Owner <span class="req">required</span><input name="step_owner" value="${esc(s.owner)}" placeholder="@handle or team" list="team-names" autocomplete="off"${editInvalid(`${at}.owner`)}></label>
+      <label>Team <span class="muted small">optional</span><input name="step_team" value="${esc(s.team)}" placeholder="Catalog team" list="team-names" autocomplete="off"${editInvalid(`${at}.team`)}></label></div>
     ${editMessages(`${at}.owner`)}${editMessages(`${at}.team`)}
     <label>Done when <span class="req">required</span><textarea name="step_done_when" rows="2" placeholder="The endpoint is merged to main with tests."${editInvalid(`${at}.done_when`)}>${esc(s.done_when)}</textarea></label>
     ${editMessages(`${at}.done_when`)}
@@ -1977,7 +1977,7 @@ function renderFeatureEdit(mode, id, project = '') {
           <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}"${mode === 'create' ? ' placeholder="Redeem rewards" autocomplete="off"' : ''}${editInvalid('name')}></label>${editMessages('name')}
           ${mode === 'create' ? `<label>Feature id <span class="muted small">suggested from the name</span><input name="id" value="${esc(d.id)}" placeholder="redeem-rewards" class="mono"${editInvalid('id')}>
             <span class="muted small">Lowercase letters, digits and dashes. It names the file (features/&lt;id&gt;.yaml) and can't be changed later.</span></label>${editMessages('id')}` : ''}
-          <div class="row3"><label>Owner <span class="req">required</span><input name="owner" value="${esc(d.owner)}" placeholder="Mobile team or @handle"${editInvalid('owner')}></label>
+          <div class="row3"><label>Owner <span class="req">required</span><input name="owner" value="${esc(d.owner)}" placeholder="Mobile team or @handle" list="team-names" autocomplete="off"${editInvalid('owner')}></label>
             <label>Target date <span class="muted small">optional</span><input type="date" name="target_date" value="${esc(d.target_date)}"${editInvalid('target_date')}></label></div>
           ${editMessages('owner')}${editMessages('target_date')}
           <label>Project <span class="muted small">optional</span><select name="project"${editInvalid('project')}>
@@ -3641,7 +3641,16 @@ async function loadTeamDefs() {
     const res = await fetch('/api/team-definitions?cached=1', { cache: 'no-store' });
     teamDefs = res.ok ? await res.json() : null;
   } catch { teamDefs = null; }
+  fillTeamNames();
   if (['teams', 'team', 'team-edit'].includes(parseRoute().route)) render();
+}
+
+// The defined teams as suggestions for every owner and team field (<datalist id="team-names">): pick one
+// from the list or type anything else (a @handle, or a team not defined yet).
+function fillTeamNames() {
+  const list = $('#team-names');
+  if (!list) return;
+  list.innerHTML = (teamDefs?.teams || []).map((t) => `<option value="${esc(t.name)}">${esc(t.id === t.name ? 'team' : `team · ${t.id}`)}</option>`).join('');
 }
 
 function ownsList(owns, { compact = false } = {}) {
