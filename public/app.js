@@ -365,7 +365,7 @@ function renderProject(id, tab) {
       ? `${mapSvg(p.features, null, { external: true })}${legend(true)}`
       : `${featureList(fs)}${outside ? `<div class="section"><h2>Outside this project</h2><div class="cols2">${outside}</div></div>` : ''}`;
   return `<p class="kicker">Project</p>
-    <div class="fhead"><h1>${esc(p.project.name)}</h1>${badge(p.state)}${archiveButton(p, { suggest: allDone(p) })}${editAccess?.can_edit && p.project.id ? newFeatureButton(p.project.id) : ''}</div>
+    <div class="fhead"><h1>${esc(p.project.name)}</h1>${badge(p.state)}${archiveButton(p, { suggest: allDone(p) })}${editAccess?.can_edit && p.project.id ? `<button type="button" class="btn small danger" data-project-delete="${esc(p.project.id)}">Delete project</button>${newFeatureButton(p.project.id)}` : ''}</div>
     ${isArchived(p.project.id) ? '<p class="arch-note">Archived for you: it no longer shows in your Roadmap or Home. Everything here is still live, and you can ask about it in Ask.</p>' : ''}
     ${p.project.description ? `<p class="lede">${esc(p.project.description)}</p>` : ''}
     <div class="facts">
@@ -3107,6 +3107,32 @@ document.addEventListener('click', (e) => {
   e.stopPropagation();
   setArchived(b.dataset.archive, b.dataset.on === '1');
 }, true);
+
+// Delete project: removes projects/<id>.yaml for everyone. A project with features can't be deleted
+// (the server checks again); the person is told which ones to move first.
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-project-delete]');
+  if (!b) return;
+  e.preventDefault();
+  const p = projectById(b.dataset.projectDelete);
+  if (!p) return;
+  const names = p.features.map((id) => snapshot.features.find((f) => f.feature.id === id)?.feature.name || id);
+  if (names.length) {
+    alert(`${p.project.name} still has ${names.length === 1 ? '1 feature' : `${names.length} features`}:\n\n${names.map((n) => `• ${n}`).join('\n')}\n\nMove ${names.length === 1 ? 'it' : 'them'} to another project or "No project" (Edit feature), or delete ${names.length === 1 ? 'it' : 'them'}, then delete the project.`);
+    return;
+  }
+  if (!confirm(`Delete ${p.project.name}? ${p.project.file || 'Its file'} is removed from the shared repo for everyone.`)) return;
+  b.disabled = true;
+  const r = await sendFeature(`/api/projects/${encodeURIComponent(p.project.id)}/delete`, 'POST', {});
+  if (r.outcome === 'published') {
+    await load();
+    toast(r.message);
+    location.hash = '#/roadmap';
+    return;
+  }
+  b.disabled = false;
+  alert(r.message || 'The project was not deleted.');
+});
 
 // When a feature has no linked work, its bar starts on the day this LifeCycle first showed it
 // (remembered in this browser), so the filled part grows as time passes toward the due date.

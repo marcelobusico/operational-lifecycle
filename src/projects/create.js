@@ -1,7 +1,8 @@
 // Creating a project from LifeCycle: a direct commit of `projects/<id>.yaml` to the shared repo with
 // the person's own GitHub credentials, through the same file operations and access check as feature
 // edits (src/features/publish.js). The file goes through exactly the validation a hand-written one
-// does (validateProject). A project that already exists is never overwritten.
+// does (validateProject). A project that already exists is never overwritten. Deleting one
+// (deleteProject) is refused while features are still in it.
 import { Document } from 'yaml';
 import { validateProject } from '../definitions.js';
 import { SourceError } from '../sources/github-client.js';
@@ -48,4 +49,29 @@ export async function publishProject({ draft, projects, io, whoAmI, where }) {
     return { outcome: 'not_published', message: `Not created: ${err.message} Nothing was saved; try again once the shared repo can be reached.` };
   }
   return { outcome: 'published', id: built.project.id, path: built.path, by, message: `Created ${built.project.name}: committed ${built.path} to ${where} as ${by}.` };
+}
+
+// Deleting a project: one commit removing projects/<id>.yaml, as this person. Refused while features
+// are still in it (they would point at a project that no longer exists): move them to another project
+// or "No project" first. Returns { outcome: published | has_features | not_found | conflict | not_published, … }.
+export async function deleteProject({ id, projects, features, io, whoAmI, where }) {
+  const p = projects.find((x) => x.id === id);
+  if (!p) return { outcome: 'not_found', message: `No project "${id}" is defined, so there is nothing to delete.` };
+  const inside = features.filter((f) => f.project === id).map((f) => ({ id: f.id, name: f.name }));
+  if (inside.length) {
+    return { outcome: 'has_features', features: inside,
+      message: `${p.name} still has ${inside.length === 1 ? '1 feature' : `${inside.length} features`} (${inside.map((f) => f.name).join(', ')}). Move ${inside.length === 1 ? 'it' : 'them'} to another project or "No project" (Edit feature), or delete ${inside.length === 1 ? 'it' : 'them'}, then delete the project.` };
+  }
+  const by = await whoAmI();
+  if (!by) return { outcome: 'not_published', message: "Not deleted: LifeCycle can't tell your GitHub user right now. Try again in a moment." };
+  try {
+    const current = await io.readCurrent(p.file);
+    if (!current) return { outcome: 'conflict', message: `Not deleted: ${p.file} is already gone from the shared repo. Refresh to see it.` };
+    await io.deleteFile(p.file, { sha: current.sha, message: `Delete project ${id} (by ${by} from LifeCycle)` });
+  } catch (err) {
+    if (!(err instanceof SourceError)) throw err;
+    if (err.kind === 'conflict') return { outcome: 'conflict', message: `Not deleted: ${err.message}` };
+    return { outcome: 'not_published', message: `Not deleted: ${err.message} Nothing was changed; try again once the shared repo can be reached.` };
+  }
+  return { outcome: 'published', id, path: p.file, by, message: `Deleted ${p.name}: removed ${p.file} from ${where} as ${by}.` };
 }

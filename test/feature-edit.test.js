@@ -299,3 +299,26 @@ test('a feature created from a project\'s page goes in that project; an edit can
   assert.equal(out.status, 200, out.body.message);
   assert.doesNotMatch(repoFile('features/reading-goals.yaml'), /project:/);
 });
+
+test('deleting a project: refused while it has features (named), read-only people can\'t, and an empty one is removed by one commit', async () => {
+  const def = await ana.open('reading-goals');
+  await ana.put('/api/features/reading-goals', { draft: { ...def.draft, project: 'reading' }, base_hash: def.base_hash });
+  const busy = await ana.post('/api/projects/reading/delete');
+  assert.equal(busy.status, 409);
+  assert.equal(busy.body.outcome, 'has_features');
+  assert.deepEqual(busy.body.features, [{ id: 'reading-goals', name: 'Reading goals' }]);
+  assert.match(busy.body.message, /Reading app still has 1 feature \(Reading goals\)\. Move it to another project or "No project"/);
+  assert.ok(repoFile('projects/reading.yaml'), 'nothing was deleted');
+  assert.equal((await cy.post('/api/projects/reading/delete')).status, 403);
+  assert.equal((await ana.post('/api/projects/nope/delete')).status, 404);
+
+  const again = await ana.open('reading-goals');
+  await ana.put('/api/features/reading-goals', { draft: { ...again.draft, project: '' }, base_hash: again.base_hash });
+  const r = await ana.post('/api/projects/reading/delete');
+  assert.equal(r.status, 200, r.body.message);
+  assert.equal(repoFile('projects/reading.yaml'), undefined);
+  const c = commitsFor('projects/reading.yaml').at(-1);
+  assert.equal(c.by, 'ana');
+  assert.match(c.message, /^Delete project reading \(by @ana from LifeCycle\)$/);
+  assert.ok(!(await bo.get('/api/roadmap')).projects.some((p) => p.project.id === 'reading'));
+});

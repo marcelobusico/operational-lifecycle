@@ -16,7 +16,7 @@ import { textHash, listFeatureOutbox } from './features/publish.js';
 import { checkForUpdate } from './update/check.js';
 import { createUpdater } from './update/upgrade.js';
 import { installInfo } from './update/install.js';
-import { publishProject } from './projects/create.js';
+import { publishProject, deleteProject } from './projects/create.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -194,6 +194,18 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
         const r = await publishProject({ draft: body.draft, projects: defs.projectDefs || [], io: app.featurePublisher.io, whoAmI: app.publisher.whoAmI, where });
         if (r.outcome === 'published') await app.refresh();
         return send(res, { published: 201, invalid: 400, conflict: 409, not_published: 503 }[r.outcome] || 200, r);
+      }
+      // Deleting a project: one commit removing projects/<id>.yaml; refused while features are in it.
+      const pdel = url.pathname.match(/^\/api\/projects\/([a-z0-9][a-z0-9-]*)\/delete$/);
+      if (req.method === 'POST' && pdel) {
+        const access = await app.featurePublisher.access();
+        if (!access.can_edit) return send(res, 403, { outcome: 'read_only', message: access.reason });
+        await app.refresh(); // check against the features as they are now
+        const defs = await app.definitionsNow();
+        const where = app.config.dataPath ? 'the local data folder' : app.config.dataRepo;
+        const r = await deleteProject({ id: pdel[1], projects: defs.projectDefs || [], features: defs.featureDefs || [], io: app.featurePublisher.io, whoAmI: app.publisher.whoAmI, where });
+        if (r.outcome === 'published') await app.refresh();
+        return send(res, { published: 200, has_features: 409, not_found: 404, conflict: 409, not_published: 503 }[r.outcome] || 200, r);
       }
       if (req.method === 'POST' && url.pathname === '/api/team-definitions/preview') {
         const body = await readBody(req);
