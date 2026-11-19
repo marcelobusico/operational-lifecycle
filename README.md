@@ -19,6 +19,10 @@ Follow **[docs/install-mac.md](docs/install-mac.md)**: download the ZIP from Git
 in Terminal (`cd ~/Downloads/operational-lifecycle-main && ./install.sh`), answer two setup questions, and
 LifeCycle opens in your browser. The installer brings its own private Node.js (it never touches
 your PATH or an existing Node.js), starts LifeCycle when you log in, and adds a **LifeCycle** app.
+Already have Node.js 20+? `LIFECYCLE_NODE=system ./install.sh` uses it and its npm instead, with
+nothing downloaded ([details](docs/install-mac.md#use-your-own-nodejs-instead)).
+It follows your `~/.npmrc` (company registry, proxy), and `LIFECYCLE_CA_FILE=/path/to/root.pem`
+trusts a proxy's own root certificate ([details](docs/install-mac.md#company-npm-registry-or-https-proxy)).
 To update, click **Check for updates** at the bottom left of the sidebar (above **Theme**): it
 compares your copy with the newest commit on `main` using your saved GitHub access, lists what's
 new, and updates and restarts LifeCycle after you confirm, keeping your settings. In Terminal,

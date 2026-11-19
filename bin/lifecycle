@@ -1,7 +1,8 @@
 #!/bin/bash
 # The `lifecycle` command, installed by install.sh as ~/.lifecycle/bin/lifecycle.
 # Runs LifeCycle on this Mac only (http://lifecycle.localhost:4317, served from 127.0.0.1), with its own
-# private Node.js. See docs/install-mac.md.
+# private Node.js, or the person's own one when installed with LIFECYCLE_NODE (path in <home>/node-path).
+# See docs/install-mac.md.
 set -uo pipefail
 
 # This file lives in <home>/app/bin/ (reached through the <home>/bin/lifecycle link).
@@ -20,9 +21,14 @@ if [ -f "$SERVICE_ENV" ]; then . "$SERVICE_ENV"; fi
 PORT="${LIFECYCLE_PORT:-${SAVED_PORT:-4317}}"
 LABEL="${LIFECYCLE_LABEL:-${SAVED_LABEL:-com.lifecycle.server}}"
 APPS_DIR="${LIFECYCLE_APPS_DIR:-${SAVED_APPS_DIR:-$HOME/Applications}}"
-NODE="$LC_HOME/runtime/node/bin/node"
+NODE_PATH_FILE="$LC_HOME/node-path"
+if [ -s "$NODE_PATH_FILE" ]; then NODE="$(head -1 "$NODE_PATH_FILE")"; OWN_NODE=yes
+else NODE="$LC_HOME/runtime/node/bin/node"; OWN_NODE=""; fi
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 MAC_APP="$APPS_DIR/LifeCycle.app"
+# A root certificate to trust on top of the usual ones (install.sh LIFECYCLE_CA_FILE), for every HTTPS call.
+CA_SAVED="$LC_HOME/ca.pem"; CA_BUNDLE="$LC_HOME/ca-bundle.pem"; CA=""
+if [ -s "$CA_SAVED" ]; then CA=yes; export NODE_EXTRA_CA_CERTS="$CA_SAVED"; fi
 LOG="$LC_HOME/logs/server.log"
 URL="http://lifecycle.localhost:$PORT"   # *.localhost is always this Mac; checks below use 127.0.0.1
 DOMAIN="gui/$(id -u)"
@@ -35,7 +41,11 @@ HOME_SHOWN="$(short "$LC_HOME")"
 
 say() { printf '%s\n' "$*"; }
 die() { printf '✗ %s\n' "$1" >&2; [ -n "${2:-}" ] && printf '  What to do: %s\n' "$2" >&2; exit 1; }
-need_node() { [ -x "$NODE" ] || die "LifeCycle's Node.js is missing ($NODE)." "Run the installer again: bash <unzipped LifeCycle folder>/install.sh"; }
+need_node() {
+  [ -x "$NODE" ] && return 0
+  [ -n "$OWN_NODE" ] && die "The Node.js LifeCycle was set to use is gone ($NODE)." "Run the installer again with the Node.js to use, for example: LIFECYCLE_NODE=system bash $(short "$APP/install.sh")   (or LIFECYCLE_NODE=/path/to/node, or LIFECYCLE_NODE=private for LifeCycle's own copy)"
+  die "LifeCycle's Node.js is missing ($NODE)." "Run the installer again: bash <unzipped LifeCycle folder>/install.sh"
+}
 loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
 # True when the page at $URL is LifeCycle (and not some other program using the port).
 answering() { curl -fsS --max-time 2 "http://127.0.0.1:$PORT/" 2>/dev/null | grep -q '<title>LifeCycle</title>'; }
@@ -46,7 +56,8 @@ cmd_install_service() {
   mkdir -p "$LC_HOME/logs" "$(dirname "$PLIST")" "$APPS_DIR"
   printf 'SAVED_PORT=%q\nSAVED_LABEL=%q\nSAVED_APPS_DIR=%q\n' "$PORT" "$LABEL" "$APPS_DIR" > "$SERVICE_ENV"
   # Starts at login, restarts if it stops unexpectedly. Listens on 127.0.0.1 only (src/server.js).
-  cat > "$PLIST" <<EOF
+  local new="$PLIST.new"
+  cat > "$new" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -59,7 +70,8 @@ cmd_install_service() {
   <dict>
     <key>LIFECYCLE_HOME</key><string>$LC_HOME</string>
     <key>LIFECYCLE_PORT</key><string>$PORT</string>
-    <key>PATH</key><string>$LC_HOME/runtime/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+$([ -n "$CA" ] && printf '    <key>NODE_EXTRA_CA_CERTS</key><string>%s</string>' "$CA_SAVED")
+    <key>PATH</key><string>$(dirname "$NODE"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -69,7 +81,10 @@ cmd_install_service() {
 </dict>
 </plist>
 EOF
-  plutil -lint "$PLIST" >/dev/null || die "The start-at-login file is not valid ($PLIST)." "Report it to the LifeCycle team."
+  plutil -lint "$new" >/dev/null || { rm -f "$new"; die "The start-at-login file is not valid ($PLIST)." "Report it to the LifeCycle team."; }
+  # launchd keeps a loaded job's old settings (e.g. another Node.js): reload it when they changed.
+  if ! cmp -s "$new" "$PLIST" && loaded; then launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true; fi
+  mv "$new" "$PLIST"
   # A double-clickable LifeCycle in Applications (and Spotlight) that opens it in the browser.
   rm -rf "$MAC_APP"
   mkdir -p "$MAC_APP/Contents/MacOS"
@@ -123,8 +138,9 @@ cmd_stop() {
 cmd_status() {
   local v; v="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP/package.json" | head -1)"
   local c; c="$(sed -n 's/.*"commit": *"\([0-9a-f]\{7\}\).*/\1/p' "$APP/installed-commit.json" 2>/dev/null | head -1)"
-  say "LifeCycle $v (${c:+commit $c of main}${c:-installed commit unknown}) · Node.js $("$NODE" -v 2>/dev/null || echo missing) (private, in $HOME_SHOWN/runtime)"
+  say "LifeCycle $v ($([ -n "$c" ] && printf 'commit %s of main' "$c" || printf 'installed commit unknown')) · Node.js $("$NODE" -v 2>/dev/null || echo missing) ($([ -n "$OWN_NODE" ] && printf 'yours, at %s' "$(short "$NODE")" || printf 'private, in %s/runtime' "$HOME_SHOWN"))"
   say "Settings: $HOME_SHOWN"
+  [ -z "$CA" ] || say "Extra root certificate trusted: $(short "$CA_SAVED")"
   if answering; then say "Running at $URL"; elif loaded; then say "Starting or failing to start: see $CMD logs"; else say "Not running. Start it with: $CMD start"; fi
   answering
 }
@@ -169,7 +185,7 @@ cmd_update() {
     api="${LIFECYCLE_GITHUB_API:-https://api.github.com}"
     tmp="$(mktemp -d)"
     say "Downloading LifeCycle ($SOURCE_REPO, $ref) from GitHub…"
-    curl -fsSL --connect-timeout 15 -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+    curl -fsSL --connect-timeout 15 ${CA:+--cacert "$CA_BUNDLE"} -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
       -o "$tmp/lifecycle.tgz" "$api/repos/$SOURCE_REPO/tarball/$ref" \
       || die "Could not download LifeCycle from GitHub ($SOURCE_REPO, $ref)." "Check your internet connection and that your GitHub access can read $SOURCE_REPO. Or download the ZIP from GitHub and run its install.sh."
     mkdir -p "$tmp/src" && tar -xzf "$tmp/lifecycle.tgz" -C "$tmp/src" --strip-components 1 || die "The download could not be unpacked." "Try again."
@@ -198,7 +214,7 @@ cmd_uninstall() {
   rm -f "$PLIST"
   rm -rf "$MAC_APP"
   if [ "$keep" = yes ]; then
-    rm -rf "$LC_HOME/runtime" "$LC_HOME/bin" "$SERVICE_ENV" "$LC_HOME/app.old" "$LC_HOME/app.new" "$APP"
+    rm -rf "$LC_HOME/runtime" "$LC_HOME/bin" "$SERVICE_ENV" "$NODE_PATH_FILE" "$LC_HOME/app.old" "$LC_HOME/app.new" "$APP"
     say "✓ LifeCycle is uninstalled. Your settings are kept in $HOME_SHOWN (delete that folder to remove them)."
   else
     rm -rf "$LC_HOME"
