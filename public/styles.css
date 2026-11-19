@@ -1116,6 +1116,7 @@ body { overscroll-behavior: none; min-height: 100vh; }
 /* archived projects */
 .btn.suggest { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) var(--tint), var(--card)); box-shadow: none; }
 .fhead .btn { margin-left: auto; }
+.fhead .btn ~ .btn { margin-left: 0; } /* several buttons: together, at the right */
 .arch-note { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--muted); color: var(--muted-foreground); font-size: 13px; }
 .arch-more { padding: 4px 16px 12px; margin: 0; }
 .f-proj .btn { margin-left: auto; }

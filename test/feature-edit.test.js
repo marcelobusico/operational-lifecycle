@@ -66,6 +66,7 @@ before(async () => {
     ['features/redeem-rewards.yaml', `id: redeem-rewards\nname: Redeem rewards\nowner: Mobile team\ndepends_on: [rewards]\ntarget_date: 2026-12-01\nsteps:\n${step('development', '@redeem-dev', 5)}`],
     // A comment and a step with evidence: both must survive an edit made in LifeCycle.
     ['features/loyalty.yaml', `# Loyalty tiers: owned by growth.\nid: loyalty\nname: Loyalty tiers\nowner: Growth team\nservices: [catalog-api]\nflags: [loyalty_tiers]\nsteps:\n${step('development', '@loyalty-dev', 6)}${step('release', 'Release team')}`],
+    ['projects/reading.yaml', 'id: reading\nname: Reading app\nowner: Catalog team\n'],
     ['features/wishlist.yaml', `id: wishlist\nname: Wishlist\nowner: Wishlist team\nsteps: []\n`],
     ['features/wishlist-share.yaml', `id: wishlist-share\nname: Wishlist share\nowner: Wishlist team\ndepends_on: [wishlist]\nsteps: []\n`],
   ]));
@@ -277,4 +278,24 @@ test('a PM creates a feature from LifeCycle; it is validated, committed and appe
   const s = await bo.get('/api/features/book-clubs/status');
   assert.equal(s.feature.name, 'Book clubs');
   assert.equal(s.steps[0].state, 'not_started', 'status comes from the evidence (none yet), never from the edit');
+});
+
+test('a feature created from a project\'s page goes in that project; an edit can move it out, and an unknown project is refused', async () => {
+  const draft = { id: 'reading-goals', name: 'Reading goals', owner: 'Catalog team', project: 'reading', target_date: '', depends_on: [],
+    services: [], flags: [], steps: [{ name: 'Development', owner: '@goals-dev', team: 'Catalog team', done_when: 'merged to main' }] };
+  const unknown = await ana.post('/api/features', { draft: { ...draft, project: 'no-such-project' } });
+  assert.equal(unknown.status, 400);
+  assert.equal(unknown.body.errors[0].field, 'project');
+  assert.match(unknown.body.errors[0].message, /not a defined project .*defined: reading/);
+  const r = await ana.post('/api/features', { draft });
+  assert.equal(r.status, 200, r.body.message);
+  assert.match(repoFile('features/reading-goals.yaml'), /^owner: Catalog team\nproject: reading\n/m);
+  const roadmap = await bo.get('/api/roadmap');
+  assert.ok(roadmap.projects.find((p) => p.project.id === 'reading').features.includes('reading-goals'), 'the feature shows in its project');
+  // "No project" in the form removes the key.
+  const def = await ana.open('reading-goals');
+  assert.equal(def.draft.project, 'reading');
+  const out = await ana.put('/api/features/reading-goals', { draft: { ...def.draft, project: '' }, base_hash: def.base_hash });
+  assert.equal(out.status, 200, out.body.message);
+  assert.doesNotMatch(repoFile('features/reading-goals.yaml'), /project:/);
 });
