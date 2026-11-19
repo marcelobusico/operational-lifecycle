@@ -4034,7 +4034,8 @@ const updHead = (title, sub = '') => `<header class="upd-h"><h2 id="upd-title">$
 const commitLink = (r, c) => `<a class="mono" href="https://github.com/${esc(r.repo)}/commit/${esc(c)}" target="_blank" rel="noopener">${esc(sha7(c))}</a>`;
 
 function upgradeAction(r) {
-  if (r.can_upgrade) return '<button type="button" class="btn primary" data-upd-go>Update now…</button>';
+  // One tap starts it: what the update does is said next to the button, so there's no second confirm.
+  if (r.can_upgrade) return '<p class="upd-note">LifeCycle restarts for a moment and this page reconnects on its own. Your settings, GitHub access and history are kept; if something goes wrong, the version you have now stays in place.</p><button type="button" class="btn primary" data-upd-go>Update now</button>';
   if (r.install?.kind === 'developer') return `<div class="upd-cmd"><p>This is a git working copy, so LifeCycle doesn't update it itself. Get the changes with:</p><code>${esc(r.pull_command)}</code></div>`;
   return '<div class="upd-cmd"><p>This copy wasn\'t installed with the Mac installer, so it can\'t update itself. Download the new ZIP and run its installer:</p><code>bash ~/Downloads/operational-lifecycle-main/install.sh</code></div>';
 }
@@ -4046,8 +4047,10 @@ function renderResult(r, note = '') {
     html = `${updHead("Couldn't check for updates")}<p class="upd-err" role="alert">${esc(r.error.message)}</p><p class="upd-fix"><b>What to do:</b> ${esc(r.error.fix)}</p>
       <div class="upd-actions"><button type="button" class="btn" data-upd-check>Check again</button></div>`;
   } else if (r.state === 'up_to_date') {
+    // Right after an update (note set) there's nothing to check again: the button closes the dialog.
+    const action = note ? '<button type="button" class="btn primary" data-upd-close>Close</button>' : '<button type="button" class="btn" data-upd-check>Check again</button>';
     html = `${updHead('Up to date', `You're running the newest LifeCycle: commit ${commitLink(r, r.install.commit)} of main, from ${esc(day(r.install.date || r.latest?.date))}.`)}
-      <div class="upd-actions"><button type="button" class="btn" data-upd-check>Check again</button></div>`;
+      <div class="upd-actions">${action}</div>`;
   } else if (r.state === 'unknown_version') {
     html = `${updHead('Installed version unknown', `This copy doesn't record which commit it is (it was installed before LifeCycle kept track). Updating installs the newest main, commit ${commitLink(r, r.latest.commit)} from ${esc(day(r.latest.date))}, and keeps track from then on.`)}
       ${ciWarning(r.ci)}<div class="upd-actions">${upgradeAction(r)}</div>`;
@@ -4062,15 +4065,6 @@ function renderResult(r, note = '') {
   }
   // The title and close button stay at the top; a note (e.g. "Updated…") goes right below them.
   updBody.innerHTML = note ? html.replace('</header>', () => `</header><p class="upd-ok" role="status">${note}</p>`) : html;
-}
-
-function renderConfirm(r) {
-  updBody.innerHTML = `${updHead('Update LifeCycle?', `This installs commit ${commitLink(r, r.latest.commit)} of main (${esc(day(r.latest.date))}).`)}
-    ${ciWarning(r.ci)}
-    <ul class="upd-bul"><li>LifeCycle restarts for a moment; this page reconnects on its own.</li>
-    <li>Your settings, GitHub access, history and logs are kept. You won't need to run setup again.</li>
-    <li>If something goes wrong, the version you have now stays in place.</li></ul>
-    <div class="upd-actions"><button type="button" class="btn" data-upd-cancel>Cancel</button><button type="button" class="btn primary" data-upd-confirm>Update now</button></div>`;
 }
 
 function renderProgress(p, offline = false) {
@@ -4133,9 +4127,7 @@ updBtn.addEventListener('click', () => { closeDrawer(); openUpdates(); });
 updDlg.addEventListener('click', (e) => {
   if (e.target === updDlg || e.target.closest('[data-upd-close]')) return updDlg.close();
   if (e.target.closest('[data-upd-check]')) return openUpdates();
-  if (e.target.closest('[data-upd-go]')) return renderConfirm(updResult);
-  if (e.target.closest('[data-upd-cancel]')) return renderResult(updResult);
-  if (e.target.closest('[data-upd-confirm]')) return startUpgrade();
+  if (e.target.closest('[data-upd-go]')) return startUpgrade();
 });
 
 // Once on open: the marker, a just-finished update's result, or an update already running.
