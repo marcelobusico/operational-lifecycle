@@ -97,11 +97,12 @@ main:focus { outline: none; }
 .ghost { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0; background: none; border-radius: 8px;
   color: var(--muted-foreground); cursor: pointer; }
 .ghost:hover { background: var(--muted); color: var(--foreground); }
-/* attribution: small and quiet at the bottom of the sidebar; the logo takes the text color in both themes */
-.built-with { display: flex; align-items: center; gap: 5px; margin: 10px 10px 0; padding-top: 10px; border-top: 1px solid var(--border);
-  font-size: 11px; color: var(--muted-foreground); text-decoration: none; white-space: nowrap; }
-.built-with:hover { color: var(--foreground); }
-.chiron-logo { flex: none; width: 64px; height: 14px; background: var(--foreground);
+/* attribution: a black box at the bottom of the sidebar (same in both themes), with the link to the source code below it */
+.attrib { display: grid; gap: 6px; margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: #000; color: #ffffffb3; }
+.attrib a { display: flex; align-items: center; gap: 5px; font-size: 11px; color: inherit; text-decoration: none; white-space: nowrap; }
+.attrib a:hover { color: #fff; }
+.attrib .src-link svg { flex: none; width: 13px; height: 13px; fill: currentColor; }
+.chiron-logo { flex: none; width: 64px; height: 14px; background: currentColor;
   -webkit-mask: url(/brand/chiron.svg) no-repeat center / contain; mask: url(/brand/chiron.svg) no-repeat center / contain; }
 
 .content { min-width: 0; display: flex; flex-direction: column; }
@@ -889,7 +890,7 @@ html.sb-resizing .shell { transition: none; }
 .rail .nav .ncount { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; }
 .rail .side-label, .rail .side-features { display: none; }
 .rail .ghost { justify-content: center; padding: 9px 0; }
-.rail .built-with { display: none; }
+.rail .attrib { display: none; }
 
 /* drawer (below 900px): over the content, with a backdrop */
 .sb-backdrop { position: fixed; inset: 0; z-index: 25; background: rgba(12, 13, 31, .5); }
