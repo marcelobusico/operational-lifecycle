@@ -33,7 +33,9 @@ export const WRITE_TOOLS = [
 // "Atlassian"), or null when only the Claude Code login matters. model: optional --model.
 export function runClaude(cfg, prompt, { what, signIn = null, noTools = false, model = null }) {
   const cmd = Array.isArray(cfg.command) && cfg.command.length ? cfg.command : ['claude', '-p'];
-  const bin = cmd[0].includes('/') ? cmd[0] : findCli(cmd[0]);
+  // A full path saved by setup can disappear (e.g. Claude Code reinstalled under a newer nvm Node):
+  // then the same name is looked for in the usual places.
+  const bin = cmd[0].includes('/') ? (fs.existsSync(cmd[0]) ? cmd[0] : findCli(path.basename(cmd[0]))) : findCli(cmd[0]);
   const name = path.basename(cmd[0]);
   if (!bin) {
     return Promise.reject(new SourceError('unreachable', `${name} isn't installed on this machine (or not where LifeCycle looks), so ${what} can't be read. Install Claude Code${signIn ? ` and sign in to ${signIn} in it, or turn this source off` : ' and sign in to it'}.`));

@@ -459,3 +459,15 @@ test('at login LifeCycle adds the Terminal folders saved by setup after its own,
   const r = await run(process.execPath, ['--input-type=module', '-e', script], { env: { HOME: dir, PATH: '/usr/bin:/bin', LIFECYCLE_HOME: path.join(dir, '.lifecycle') } });
   assert.match(r.stdout, /"ok": true/, r.all);
 });
+
+test('a saved Claude Code path that no longer exists falls back to the same name in the usual places', async () => {
+  const home = tmp('moved');
+  const bin = path.join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\necho moved-ok\n', { mode: 0o755 });
+  const gone = path.join(home, '.nvm', 'versions', 'node', 'v22.0.0', 'bin', 'claude');
+  const script = `const { runClaude } = await import('./src/claude-run.js');
+    process.stdout.write(await runClaude({ command: [${JSON.stringify(gone)}, '-p'], timeoutMs: 10000 }, 'hi', { what: 'x', noTools: true }));`;
+  const r = await run(process.execPath, ['--input-type=module', '-e', script], { env: { HOME: home, PATH: '/usr/bin:/bin', LIFECYCLE_HOME: path.join(home, '.lifecycle') } });
+  assert.equal(r.stdout.trim(), 'moved-ok', r.all);
+});
