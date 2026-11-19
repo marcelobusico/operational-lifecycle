@@ -23,7 +23,7 @@ async function person(name, { owners, login }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), `lifecycle-${name}-`));
   const config = { ...DEFAULTS, dataRepo: DATA, me: { owners, github: null }, sources: { github: { enabled: true, apiUrl: gh.url }, flagsmith: { ...DEFAULTS.sources.flagsmith, enabled: false } } };
   process.env.LIFECYCLE_HOME = home;
-  const server = createServer(createApp({ config, token: gh.token, flagsmithApiKey: null }));
+  const server = createServer(createApp({ alwaysLive: true, config, token: gh.token, flagsmithApiKey: null }));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}`;
   // Every call runs "as" this person: their home, their GitHub login.

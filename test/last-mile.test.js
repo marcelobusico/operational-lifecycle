@@ -12,7 +12,7 @@ import { createServer } from '../src/server.js';
 let w, home, lc;
 
 function startLifecycle({ config = w.config, flagsmithApiKey = w.fs.apiKey } = {}) {
-  const server = createServer(createApp({ config, token: w.gh.token, flagsmithApiKey }));
+  const server = createServer(createApp({ alwaysLive: true, config, token: w.gh.token, flagsmithApiKey }));
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
     url: `http://127.0.0.1:${server.address().port}`,
     close: () => new Promise((r) => { server.close(r); server.closeAllConnections(); }),

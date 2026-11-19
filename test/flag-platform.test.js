@@ -150,7 +150,7 @@ test('someone who deliberately types flagsmith gets the Flagsmith questions and 
 async function lifecycleOn(w, { config, statsigApiKey = w.st.apiKey, flagsmithApiKey = w.fs.apiKey } = {}) {
   const { createApp } = await import('../src/app.js');
   const { createServer } = await import('../src/server.js');
-  const server = createServer(createApp({ config, token: w.gh.token, flagsmithApiKey, statsigApiKey }));
+  const server = createServer(createApp({ alwaysLive: true, config, token: w.gh.token, flagsmithApiKey, statsigApiKey }));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}`;
   return {
@@ -322,8 +322,8 @@ test('ramp reasons and digest entries read from Statsig name Statsig, never "fla
   const { buildDigest } = await import('../src/ask/digest.js');
   const w = await startWorld();
   try {
-    const app = createApp({ config: w.configFor('statsig'), token: w.gh.token, statsigApiKey: w.st.apiKey });
-    let snap = await app.refresh();
+    const app = createApp({ alwaysLive: true, config: w.configFor('statsig'), token: w.gh.token, statsigApiKey: w.st.apiKey });
+    let snap = await app.refresh({ live: true });
     // A flag the definition names but Statsig doesn't have: the ramp reason says where it looked.
     const ghost = snap.features.find((f) => f.feature.id === 'loyalty-tiers').ramp.reasons.find((r) => r.check === 'flags');
     assert.equal(ghost.message, 'Flag ghost_flag doesn\'t exist in Statsig.');
@@ -331,7 +331,7 @@ test('ramp reasons and digest entries read from Statsig name Statsig, never "fla
     const person = { owners: [], follows: ['rewards'] };
     const first = buildDigest({ snap, config: app.config, person, state: null });
     w.st.state.set('production', 'rewards_enabled', { enabled: true, at: '2026-11-05T09:00:00Z' });
-    snap = await app.refresh();
+    snap = await app.refresh({ live: true });
     const { digest } = buildDigest({ snap, config: app.config, person, state: first.nextState });
     const item = digest.features.find((f) => f.id === 'rewards').items.find((i) => i.kind === 'flag');
     assert.match(item.text, /^rewards_enabled in production: off → on/);

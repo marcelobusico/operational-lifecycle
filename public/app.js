@@ -46,27 +46,30 @@ let teamForm = null;   // { mode, id, draft, base_hash, preview, errors, result,
 let teamDelete = null; // { id, step: 'ask'|'decide'|'confirm_unowned'|'done', affected, handover, result, busy }
 const chatActions = new Map(); // action id -> { busy, result }
 
-async function load() {
-  const btn = $('#refresh');
+// Nothing reloads on a timer. load() re-reads the shared repo and shows the sources as last read;
+// load({ live: true }) ("Refresh data") reads every source live (GitHub, deploys, flags, stores, Slack, Jira).
+async function load({ live = false } = {}) {
+  const btns = [$('#refresh'), $('#refresh-data')];
   const pill = $('#sync-status');
-  btn.disabled = true;
+  btns.forEach((b) => { b.disabled = true; });
   pill.className = 'sync-pill busy';
   const started = performance.now();
-  pill.innerHTML = `<span class="f-lattice" aria-hidden="true">${'<i></i>'.repeat(9)}</span><span class="lbl">Reading live status <span class="f-secs">0.0s</span></span>`;
+  pill.innerHTML = `<span class="f-lattice" aria-hidden="true">${'<i></i>'.repeat(9)}</span><span class="lbl">${live ? 'Reading every source' : 'Reading the shared repo'} <span class="f-secs">0.0s</span></span>`;
   const secs = setInterval(() => { const el = pill.querySelector('.f-secs'); if (el) el.textContent = `${((performance.now() - started) / 1000).toFixed(1)}s`; }, 100);
   try {
-    const res = await fetch('/api/roadmap', { cache: 'no-store' });
+    const res = live ? await fetch('/api/refresh-data', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', cache: 'no-store' })
+      : await fetch('/api/roadmap', { cache: 'no-store' });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
     snapshot = await res.json();
   } catch (err) {
     clearInterval(secs);
     pill.className = 'sync-pill stale';
     pill.innerHTML = `<span class="dot"></span><span class="lbl">Can't reach LifeCycle: ${esc(err.message)}</span>`;
-    btn.disabled = false;
+    btns.forEach((b) => { b.disabled = false; });
     return render();
   }
   clearInterval(secs);
-  btn.disabled = false;
+  btns.forEach((b) => { b.disabled = false; });
   render();
   tickSync();
   loadAlerts();
@@ -94,6 +97,14 @@ function tickSync() {
   pill.className = `sync-pill${d.stale ? ' stale' : ''}`;
   pill.title = `${head}${d.commit ? ` @ ${d.commit_short}` : ''} · ${read}`;
   pill.innerHTML = `<span class="dot"></span><span class="lbl">${esc(head)}${commit ? ` @ ${commit}` : ''} · ${esc(read)}</span>`;
+  // When the sources were last read live: the status on screen is from then until "Refresh data".
+  const data = $('#data-status');
+  const at = snapshot.sources_read?.read_at;
+  data.hidden = !at;
+  if (at) {
+    data.title = `PRs, deploys, flags, stores, Slack and Jira were read ${new Date(at).toLocaleString()}. Press Refresh data to read them again.`;
+    data.innerHTML = `<span class="lbl">Data read ${esc(ago(at))}</span>`;
+  }
 }
 setInterval(tickSync, 30000);
 
@@ -1355,7 +1366,7 @@ function chatPanelHtml() {
   const msgs = thread.map((m) => `<div class="msg q"><span>${esc(m.question)}</span></div>
     <div class="msg a">${m.pending ? '<span class="muted">Reading live status…</span>' : m.error ? `<p class="alert">${esc(m.error)}</p>` : m.answer.kind === 'change' ? changeHtml(m.answer, m === thread.at(-1)) : answerHtml(m.answer)}</div>`).join('');
   const cards = [
-    ...ex.list.map((q, i) => ({ q, icon: ['status', 'blocked', 'users'][i % 3], sub: ['Where it stands, read live', 'And who to push', 'Deployed and turned on?'][i % 3] })),
+    ...ex.list.map((q, i) => ({ q, icon: ['status', 'blocked', 'users'][i % 3], sub: ['Where it stands', 'And who to push', 'Deployed and turned on?'][i % 3] })),
     { q: 'create a feature called ', icon: 'create', sub: 'Asks for what it needs, shows it before saving', fill: true, label: 'Create a feature' },
   ];
   const empty = `<div class="cd-empty"><div class="cd-spark">${SPARK}</div><h2>LifeCycle is on your features</h2>
@@ -1593,8 +1604,6 @@ async function loadAlerts({ cached = true } = {}) {
   }
   render();
 }
-// Teammates register changes without anyone asking: the list is re-read every two minutes.
-setInterval(() => loadAlerts({ cached: false }), 120000);
 
 const isNew = (a) => sessionNew.has(a.id);
 
@@ -3160,7 +3169,8 @@ sbResize.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('hashchange', () => { closeDrawer(); render(); $('#main').focus(); window.scrollTo(0, 0); });
-$('#refresh').addEventListener('click', load);
+$('#refresh').addEventListener('click', () => load());
+$('#refresh-data').addEventListener('click', () => load({ live: true }));
 $('#theme').addEventListener('click', () => {
   const dark = !document.documentElement.classList.contains('dark');
   document.documentElement.classList.toggle('dark', dark);

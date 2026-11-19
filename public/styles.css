@@ -1470,6 +1470,8 @@ a, a:hover, a:focus, a:focus-visible, a:visited, .linkbtn, .linkbtn:hover, .link
 .top-alerts .ncount { margin-left: 0; }
 .side-sync { display: flex; flex-direction: column; gap: 2px; padding: 10px 0 8px; margin-bottom: 6px; border-top: 1px solid var(--border); }
 .side-sync .sync-pill { padding: 4px 10px; color: var(--muted-foreground); font-size: 12px; line-height: 1.35; }
+.side-sync .data-pill { padding-top: 0; padding-left: 26px; }
+.rail .data-pill { display: none; }
 .side-sync .sync-pill .lbl { min-width: 0; overflow-wrap: anywhere; }
 .side-sync .sync-pill .dot { flex: none; }
 .side-sync #refresh[disabled] { opacity: .6; cursor: progress; }

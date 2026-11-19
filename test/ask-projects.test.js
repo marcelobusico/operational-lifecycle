@@ -45,7 +45,7 @@ before(async () => {
   w.gh.state.prs.set(`${CATALOG}#10`, { title: 'Split catalog', state: 'open', merged_at: null, head: { sha: 'head10' } });
 
   localConfig = { ai: { ...DEFAULTS.ai, provider: 'none' }, me: { owners: ['@dev'] }, atRiskDays: 14 };
-  app = createApp({ config: { ...w.config, atRiskDays: 14 }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
+  app = createApp({ alwaysLive: true, config: { ...w.config, atRiskDays: 14 }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
   ask = createAskService({ app, readConfig: () => localConfig });
   const server = createServer(app, ask);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));

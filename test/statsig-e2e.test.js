@@ -14,7 +14,7 @@ import { createServer } from '../src/server.js';
 let w, home, lc;
 
 function startLifecycle({ platform = 'statsig', statsigApiKey = w.st.apiKey } = {}) {
-  const server = createServer(createApp({ config: w.configFor(platform), token: w.gh.token, flagsmithApiKey: w.fs.apiKey, statsigApiKey }));
+  const server = createServer(createApp({ alwaysLive: true, config: w.configFor(platform), token: w.gh.token, flagsmithApiKey: w.fs.apiKey, statsigApiKey }));
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
     url: `http://127.0.0.1:${server.address().port}`,
     close: () => new Promise((r) => { server.close(r); server.closeAllConnections(); }),

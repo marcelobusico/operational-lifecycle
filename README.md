@@ -9,8 +9,8 @@ blocking it. LifeCycle runs on your own machine and opens in your browser. There
 - **Feature definitions** (owner, steps, dependencies) come from a shared GitHub repo your team
   creates (called *LifeCycle-Data* in these docs; any name works). See
   [Create your shared repo](#create-your-shared-repo-lifecycle-data).
-- **Step states** are read live from GitHub (PRs and issues) every time you look, with **your
-  own** credentials. Nobody types a status, so it can't go stale, and two people with the same
+- **Step states** are read live from GitHub (PRs and issues) when you press **Refresh data**, with
+  **your own** credentials (nothing is read on a timer). Nobody types a status, so it can't go stale, and two people with the same
   access see the same thing.
 
 ## Install on a Mac (no developer tools needed)
@@ -150,7 +150,15 @@ Nothing is ever written to this folder or to the shared repo. LifeCycle only rea
 npm start
 ```
 
-Open **http://lifecycle.localhost:4317** (`*.localhost` always means your own Mac; http://localhost:4317 works too). Press **Refresh** (or reload) to read everything live again.
+Open **http://lifecycle.localhost:4317** (`*.localhost` always means your own Mac; http://localhost:4317 works too). Nothing is read on a timer, so LifeCycle doesn't keep calling services or spending Claude tokens:
+
+- **Refresh** (or reloading the page) reads the shared repo again: features, projects, teams, apps
+  and registered changes. The status from the sources stays as it was last read.
+- **Refresh data** reads every source live: pull requests and issues, deploys, flags, app stores,
+  and Slack and Jira through Claude. The sidebar shows when that was (**Data read 12 min ago**).
+
+When LifeCycle starts it shows the data it read last; the very first start on a machine reads
+every source once.
 
 - **Projects** (home): one card per project with its rolled-up state, how many features are
   blocked or done, and who to push. Features are grouped by the `project` in their definition.

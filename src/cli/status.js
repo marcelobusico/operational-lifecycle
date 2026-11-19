@@ -3,7 +3,7 @@
 import { createApp } from '../app.js';
 
 const id = process.argv[2];
-const snap = await createApp().refresh();
+const snap = await createApp({ alwaysLive: true }).refresh();
 if (!id) {
   console.log(JSON.stringify(snap, null, 2));
 } else {

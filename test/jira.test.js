@@ -101,8 +101,8 @@ const ev = (snap, step, key) => feature(snap).steps.find((s) => s.id === step).e
 
 test('the publisher reads every ticket in one Claude run, steps follow them, and snapshots are committed', async () => {
   const calls = [];
-  const app = createApp({ config: jiraOn(), token: w.gh.token, jiraRun: fakeClaude(TICKETS, calls) });
-  const snap = await app.refresh();
+  const app = createApp({ alwaysLive: true, config: jiraOn(), token: w.gh.token, jiraRun: fakeClaude(TICKETS, calls) });
+  const snap = await app.refresh({ live: true });
   assert.equal(calls.length, 1, 'one run for all tickets of the refresh');
   assert.deepEqual(calls[0].keys.sort(), ['BOOK-101', 'BOOK-102', 'OPS-7']);
   const f = feature(snap);
@@ -124,14 +124,14 @@ test('the publisher reads every ticket in one Claude run, steps follow them, and
   assert.deepEqual(snap.jira_snapshots.failed, []);
   // Within the interval: no new run, and nothing new committed.
   const commits = w.gh.state.commits.length;
-  await createApp({ config: jiraOn(), token: w.gh.token, jiraRun: fakeClaude(TICKETS, calls) }).refresh();
+  await createApp({ alwaysLive: true, config: jiraOn(), token: w.gh.token, jiraRun: fakeClaude(TICKETS, calls) }).refresh({ live: true });
   assert.equal(calls.length, 1);
   assert.equal(w.gh.state.commits.length, commits);
 });
 
 test('a teammate without Jira sees the tickets from the team snapshot, marked as such', async () => {
-  const app = createApp({ config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token, jiraRun: async () => assert.fail('a reader never runs Claude') });
-  const snap = await app.refresh();
+  const app = createApp({ alwaysLive: true, config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token, jiraRun: async () => assert.fail('a reader never runs Claude') });
+  const snap = await app.refresh({ live: true });
   const t = ev(snap, 'ui', 'BOOK-102');
   assert.equal(t.state, 'in_progress');
   assert.equal(t.from_snapshot, true);
@@ -142,7 +142,7 @@ test('a teammate without Jira sees the tickets from the team snapshot, marked as
 });
 
 test('a step read from a team snapshot shows the snapshot\'s read time and says so, in its sources too', async () => {
-  const snap = await createApp({ config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token }).refresh();
+  const snap = await createApp({ alwaysLive: true, config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token }).refresh({ live: true });
   const step = feature(snap).steps.find((s) => s.id === 'ui');
   assert.equal(step.from_snapshot, true);
   assert.equal(step.last_successful_read_at, ev(snap, 'ui', 'BOOK-102').last_successful_read_at, 'the snapshot read time, not now');
@@ -156,10 +156,10 @@ test('tickets Claude leaves out cost no extra run: one run per refresh, the rest
   const onlyOne = fakeClaude({ 'BOOK-101': TICKETS['BOOK-101'] }, calls);
   const leaveOut = async (cfg, prompt) => { const a = JSON.parse(await onlyOne(cfg, prompt)); a.missing = []; return JSON.stringify(a); };
   fs.writeFileSync(path.join(home, 'cache', 'jira.json'), 'null'); // a damaged cache is started over, never a crash
-  const first = await createApp({ config: jiraOn({ intervalMinutes: 0 }), token: w.gh.token, jiraRun: leaveOut }).refresh();
+  const first = await createApp({ alwaysLive: true, config: jiraOn({ intervalMinutes: 0 }), token: w.gh.token, jiraRun: leaveOut }).refresh({ live: true });
   assert.equal(calls.length, 1, 'not one more run per unanswered ticket');
   assert.equal(ev(first, 'ui', 'BOOK-102').from_snapshot, true, 'unanswered: the team snapshot');
-  await createApp({ config: jiraOn(), token: w.gh.token, jiraRun: leaveOut }).refresh();
+  await createApp({ alwaysLive: true, config: jiraOn(), token: w.gh.token, jiraRun: leaveOut }).refresh({ live: true });
   assert.equal(calls.length, 1, 'within the interval, unanswered tickets are not asked again');
 });
 
@@ -175,13 +175,13 @@ test('a Jira site typed without https:// still gives ticket links', () => {
 
 test('Claude failing on the publisher\'s machine: one try per refresh, then the snapshot', async () => {
   let runs = 0;
-  const app = createApp({ config: jiraOn({ intervalMinutes: 0 }), token: w.gh.token, jiraRun: async () => { runs += 1; return 'Sorry, I could not reach Atlassian.'; } });
-  const snap = await app.refresh();
+  const app = createApp({ alwaysLive: true, config: jiraOn({ intervalMinutes: 0 }), token: w.gh.token, jiraRun: async () => { runs += 1; return 'Sorry, I could not reach Atlassian.'; } });
+  const snap = await app.refresh({ live: true });
   assert.equal(runs, 1);
   assert.equal(ev(snap, 'ui', 'BOOK-102').from_snapshot, true);
   assert.equal(feature(snap).steps[1].state, 'in_progress');
   // Within the interval after a failure, the next refresh doesn't wait on Claude again.
-  await createApp({ config: jiraOn({ intervalMinutes: 30 }), token: w.gh.token, jiraRun: async () => { runs += 1; return 'still no'; } }).refresh();
+  await createApp({ alwaysLive: true, config: jiraOn({ intervalMinutes: 30 }), token: w.gh.token, jiraRun: async () => { runs += 1; return 'still no'; } }).refresh({ live: true });
   assert.equal(runs, 1);
   fs.rmSync(path.join(home, 'cache', 'jira.json'), { force: true });
 });
@@ -191,10 +191,10 @@ test('a ticket Jira doesn\'t have, and one nobody has shared yet, are "unavailab
   const original = files.get('features/reading-list.yaml');
   files.set('features/reading-list.yaml', original.replace('key: BOOK-102', 'key: BOOK-999'));
   try {
-    const live = await createApp({ config: jiraOn({ intervalMinutes: 0 }), token: w.gh.token, jiraRun: fakeClaude() }).refresh();
+    const live = await createApp({ alwaysLive: true, config: jiraOn({ intervalMinutes: 0 }), token: w.gh.token, jiraRun: fakeClaude() }).refresh({ live: true });
     assert.equal(feature(live).steps[1].state, 'unavailable');
     assert.match(feature(live).steps[1].message, /Jira has no ticket BOOK-999, or your Atlassian account can't see it/);
-    const reader = await createApp({ config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token }).refresh();
+    const reader = await createApp({ alwaysLive: true, config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token }).refresh({ live: true });
     assert.equal(feature(reader).steps[1].state, 'no_access');
     assert.match(feature(reader).steps[1].message, /Jira isn't read on this machine, and nobody's LifeCycle has shared BOOK-999 yet.*lifecycle setup --extras/);
   } finally {
@@ -236,4 +236,49 @@ test('the feature editor attaches Jira tickets to a step, shows what is linked, 
   assert.deepEqual(again.diff, []);
   const bad = buildFeatureFile({ draft: withJira(['BOOK7']), mode: 'update', base: { text, feature }, features: [feature] });
   assert.deepEqual(bad.errors.map((e) => [e.field, e.message]), [['steps[0].evidence[1].key', 'must be a Jira ticket key like ABC-123']]);
+});
+
+// Nothing is read on a timer: a plain refresh reads only the shared repo and shows what the last
+// live read ("Refresh data") said, without calling Claude or GitHub for PRs, deploys or flags.
+test('a plain refresh reuses the last live read; Refresh data reads the sources again', async () => {
+  const calls = [];
+  const urls = [];
+  const fetchImpl = (u, o) => { urls.push(String(u)); return fetch(u, o); };
+  const mk = (tickets) => createApp({ config: jiraOn({ intervalMinutes: 0 }), token: w.gh.token, fetchImpl, jiraRun: fakeClaude(tickets, calls) });
+  const live = await mk(TICKETS).refresh({ live: true });
+  assert.equal(live.sources_read.live, true);
+  assert.equal(calls.length, 1);
+  const commits = w.gh.state.commits.length;
+
+  // Jira moved on, but a plain refresh doesn't ask: same states, same read time, no commits.
+  const moved = { ...TICKETS, 'BOOK-102': { ...TICKETS['BOOK-102'], status: 'Done', status_category: 'Done', resolved: '2026-11-18T10:00:00Z' } };
+  urls.length = 0;
+  const cached = await mk(moved).refresh();
+  assert.equal(calls.length, 1, 'no Claude run');
+  assert.ok(!urls.some((u) => u.includes(CATALOG)), `no reads of the code repo: ${urls.filter((u) => u.includes(CATALOG)).join(', ')}`);
+  assert.deepEqual(cached.sources_read, { read_at: live.sources_read.read_at, live: false });
+  assert.equal(ev(cached, 'ui', 'BOOK-102').detail, 'In Review');
+  assert.equal(feature(cached).steps[1].state, feature(live).steps[1].state);
+  assert.deepEqual(feature(cached).last_mile, feature(live).last_mile);
+  assert.equal(w.gh.state.commits.length, commits);
+
+  // A PR just linked to a step (never read here) is read once on a plain refresh: GitHub, no Claude.
+  const resultsFile = path.join(home, 'cache', 'evidence-results.json');
+  const saved = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
+  const prKeys = Object.keys(saved).filter((k) => !/BOOK-|OPS-/.test(k));
+  assert.ok(prKeys.length, 'the feature has a PR');
+  for (const k of prKeys) delete saved[k];
+  fs.writeFileSync(resultsFile, JSON.stringify(saved));
+  urls.length = 0;
+  const linked = await mk(moved).refresh();
+  assert.equal(calls.length, 1, 'still no Claude run');
+  assert.ok(urls.some((u) => u.includes(CATALOG)), 'the new PR is read');
+  assert.equal(feature(linked).steps[0].state, feature(live).steps[0].state);
+  assert.ok(prKeys.every((k) => JSON.parse(fs.readFileSync(resultsFile, 'utf8'))[k]), 'and saved for the next plain refresh');
+
+  // Refresh data: read again, and the new state shows.
+  const again = await mk(moved).refresh({ live: true });
+  assert.equal(calls.length, 2);
+  assert.equal(again.sources_read.live, true);
+  assert.equal(ev(again, 'ui', 'BOOK-102').detail, 'Done');
 });

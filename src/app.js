@@ -1,7 +1,12 @@
-// One refresh = read the definitions, then read every step's evidence live and compute statuses.
-// Nothing is kept between refreshes except the definitions cache and last-read times, so what a
-// person sees always comes from the sources at that moment.
-import { loadConfig, githubToken, liveGithubToken, githubAccess, flagsmithKey, statsigKey, storeCredentials as readStoreCredentials, appUrl, migrateSavedFlagPlatform, readNotices } from './config.js';
+// One refresh = read the definitions, then compute statuses from every step's evidence.
+// Two kinds (nothing runs on a timer; a person asks for each):
+// - refresh() reads only the shared repo and reuses what the sources said at the last live read
+//   (saved in the cache folder), so it never calls GitHub PRs, deploys, flags, stores or Claude.
+// - refresh({ live: true }) ("Refresh data") reads every source live and saves what they said.
+// The very first refresh on a machine (nothing saved yet) reads live.
+import fs from 'node:fs';
+import path from 'node:path';
+import { paths, writeJson, loadConfig, githubToken, liveGithubToken, githubAccess, flagsmithKey, statsigKey, storeCredentials as readStoreCredentials, appUrl, migrateSavedFlagPlatform, readNotices } from './config.js';
 import { resolveFlagPlatform, chosenFlagPlatform, teamFlagPlatform, FLAG_PLATFORM_NAME } from './team.js';
 import { createGithubClient } from './sources/github-client.js';
 import { createEvidenceReader } from './sources/index.js';
@@ -21,6 +26,16 @@ import { buildTeamRegistry, teamsSummary } from './teams/registry.js';
 import { teamDependencies } from './teams/dependencies.js';
 import { createTeamPublisher } from './teams/publish.js';
 import { commitJiraSnapshots } from './sources/jira-snapshots.js';
+
+// What the last live read said beyond the evidence (src/sources keeps that): the last mile per
+// feature and the flag source's health, and when that read was.
+const sourcesFile = () => path.join(paths.cacheDir(), 'sources-read.json');
+function loadSourcesRead() {
+  try {
+    const c = JSON.parse(fs.readFileSync(sourcesFile(), 'utf8'));
+    return c && typeof c.read_at === 'string' ? c : null;
+  } catch { return null; }
+}
 
 // The feature-edit access message, in team words.
 export const teamReadOnly = (reason) => String(reason || 'You have read-only access to the shared repo.').replace(/feature data/g, 'teams').replace(/edit features/g, 'manage teams');
@@ -62,7 +77,7 @@ export function definitionsNotice(d) {
 // storeCredentials: per-store credentials (src/config.js storeCredentials()). storeConnectors: extra
 // store connectors by store id (src/stores/index.js), used to plug in a store not built in yet.
 // slackRun / jiraRun: replace the Claude Code calls that read Slack release channels and Jira (tests).
-export function createApp({ config = loadConfig(), token, flagsmithApiKey = flagsmithKey(), statsigApiKey = statsigKey(), storeCredentials = readStoreCredentials(), storeConnectors = {}, fetchImpl, slackRun, jiraRun } = {}) {
+export function createApp({ config = loadConfig(), token, flagsmithApiKey = flagsmithKey(), statsigApiKey = statsigKey(), storeCredentials = readStoreCredentials(), storeConnectors = {}, fetchImpl, slackRun, jiraRun, alwaysLive = false } = {}) {
   let inFlight = null;
   let queued = null;
   let lastSnap = null;
@@ -99,7 +114,9 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
     return { defs, parsed: parseDefinitions(defs.files) };
   }
 
-  async function refreshOnce() {
+  async function refreshOnce({ live = false } = {}) {
+    const saved = live ? null : loadSourcesRead();
+    if (!saved) live = true; // nothing read on this machine yet: read the sources once
     let { defs, parsed } = await readDefinitions();
     // Changes waiting to be published (the repo was unreachable): try them first, so a teammate's
     // copy and this one see them as soon as the repo is back.
@@ -149,7 +166,7 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
       config.flagPlatformSource = 'team';
     }
     const flagPlatform = resolveFlagPlatform(config, parsed.team);
-    const reader = createEvidenceReader({ config, tokens: { github: githubTokenNow }, fetchImpl, jiraSnapshots, jiraRun });
+    const reader = createEvidenceReader({ config, tokens: { github: githubTokenNow }, fetchImpl, jiraSnapshots, jiraRun, live });
     await reader.prefetch(features);
     const statuses = await computeStatuses({ features, projects, invalidIds, read: reader.read, definitions });
     reader.save();
@@ -159,9 +176,20 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
       s.team_dependencies = def ? teamDepsOf(def) : null;
       s.team_warnings = teamRegistry.warningsFor(s.feature.id);
     }
-    // Last mile: is the work deployed and turned on? Same refresh, same credentials, read live.
+    // Last mile: is the work deployed and turned on? Read live with the same credentials on a live
+    // refresh; otherwise what the last live read saved (a feature added since has none yet).
     const lastMileRun = createLastMile({ config: { ...config, flagPlatform: flagPlatform.platform }, githubClient: github, flagsmithKey: flagsmithApiKey, statsigKey: statsigApiKey, storeCredentials, storeConnectors, fetchImpl, slackRun });
-    const lastMile = await lastMileRun.compute(features, services, apps, storeSnapshots, flagSnapshots);
+    let lastMile, flagSource, sourcesReadAt;
+    if (live) {
+      lastMile = await lastMileRun.compute(features, services, apps, storeSnapshots, flagSnapshots);
+      flagSource = lastMileRun.flagSource();
+      sourcesReadAt = new Date().toISOString();
+      try { writeJson(sourcesFile(), { read_at: sourcesReadAt, flag_source: flagSource, last_mile: Object.fromEntries(lastMile) }); } catch (err) { console.error(`lifecycle: could not save the source reads: ${err.message}`); }
+    } else {
+      lastMile = new Map(Object.entries(saved.last_mile || {}));
+      flagSource = saved.flag_source || null;
+      sourcesReadAt = saved.read_at;
+    }
     for (const s of statuses) s.last_mile = lastMile.get(s.feature.id) || null;
     // Commit what the stores said to LifeCycle-Data (store-snapshots/), when it changed or is old.
     // Never blocks the refresh: a failed write is logged and shown as a count.
@@ -170,13 +198,14 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
     // local clone would never be pushed (and would stop the clone from pulling).
     let writeAccess = null;
     const canWrite = async () => { writeAccess ??= !config.dataPath && Boolean((await featurePublisher.access()).can_edit); return writeAccess; };
-    const snapshotResults = defs.stale ? [] : await commitSnapshots({ config, github, reads: lastMileRun.storeReads(), existing: storeSnapshots, canWrite });
+    // Team snapshots come only from live reads, so a refresh that reads nothing writes nothing.
+    const snapshotResults = defs.stale || !live ? [] : await commitSnapshots({ config, github, reads: lastMileRun.storeReads(), existing: storeSnapshots, canWrite });
     // Commit what the flag platform said to LifeCycle-Data (flag-snapshots/), so teammates without a
     // key see it, and the Jira tickets read here (jira-snapshots/) the same way. Only from live reads.
-    const jiraSnapshotResults = defs.stale ? [] : await commitJiraSnapshots({ config, github, reads: reader.jiraReads(), existing: jiraSnapshots, canWrite });
-    const flagSnapshotResults = defs.stale ? [] : await commitFlagSnapshots({ config, github, reads: lastMileRun.flagReads(), existing: flagSnapshots, canWrite });
+    const jiraSnapshotResults = defs.stale || !live ? [] : await commitJiraSnapshots({ config, github, reads: reader.jiraReads(), existing: jiraSnapshots, canWrite });
+    const flagSnapshotResults = defs.stale || !live ? [] : await commitFlagSnapshots({ config, github, reads: lastMileRun.flagReads(), existing: flagSnapshots, canWrite });
     // Registered changes (shared repo, with the definitions) and the alert list (alerts work).
-    const alerts = await readAlerts(config, { fetchImpl });
+    const alerts = await readAlerts(config, { fetchImpl, live });
     const link = (c) => changeLink(config, c);
     const alertList = buildAlertList({ features, statuses, changes, changeLink: link, config });
     for (const s of statuses) s.delay = alertList.delay[s.feature.id];
@@ -201,7 +230,9 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
       invalid_definitions: invalid,
       // Where flags are read from and why (src/team.js), plus the flag source's health for Home.
       flag_platform: { ...flagPlatform, name: FLAG_PLATFORM_NAME[flagPlatform.platform] },
-      flag_source: lastMileRun.flagSource(),
+      flag_source: flagSource,
+      // When the sources (PRs, deploys, flags, stores, Slack, Jira) were last read live, and whether this refresh did.
+      sources_read: { read_at: sourcesReadAt, live },
       store_snapshots: { committed: snapshotResults.filter((r) => r.outcome === 'committed').map((r) => r.file), failed: snapshotResults.filter((r) => r.outcome === 'failed') },
       jira_snapshots: { committed: jiraSnapshotResults.filter((r) => r.outcome === 'committed').map((r) => r.file), failed: jiraSnapshotResults.filter((r) => r.outcome === 'failed') },
       flag_snapshots: { committed: flagSnapshotResults.filter((r) => r.outcome === 'committed').map((r) => r.file), failed: flagSnapshotResults.filter((r) => r.outcome === 'failed') },
@@ -228,14 +259,18 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
   // Every refresh reads LifeCycle-Data again. A refresh asked for while another is running never gets
   // that one (it may have read before a push the person is waiting for): it waits for a new read that
   // starts once the running one ends. Everyone asking during the same run shares that next read.
-  function start() {
-    inFlight = refreshOnce().then((snap) => { lastSnap = snap; return snap; }).finally(() => { inFlight = null; });
+  // The queued read is live when anyone waiting for it asked for live data.
+  let queuedLive = false;
+  function start(live) {
+    inFlight = refreshOnce({ live }).then((snap) => { lastSnap = snap; return snap; }).finally(() => { inFlight = null; });
     return inFlight;
   }
-  function refresh() {
-    if (!inFlight) return start();
+  // alwaysLive: every refresh reads the sources (one-shot tools like `lifecycle status`, and tests).
+  function refresh({ live = alwaysLive } = {}) {
+    if (!inFlight) return start(live);
+    queuedLive ||= live;
     if (!queued) {
-      queued = inFlight.catch(() => {}).then(() => { queued = null; return start(); });
+      queued = inFlight.catch(() => {}).then(() => { const l = queuedLive; queuedLive = false; queued = null; return start(l); });
     }
     return queued;
   }

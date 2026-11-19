@@ -200,8 +200,8 @@ test('publisher reads Slack and commits snapshots; a teammate without Slack or s
     const slackRun = async () => { runs += 1; return answer(); };
 
     // The publisher: Slack on, no App Store key.
-    const publisher = createApp({ config: { ...config, sources: { ...config.sources, slack: { ...DEFAULTS.sources.slack, enabled: true } } }, token: w.gh.token, storeCredentials: {}, slackRun });
-    const snap = await publisher.refresh();
+    const publisher = createApp({ alwaysLive: true, config: { ...config, sources: { ...config.sources, slack: { ...DEFAULTS.sources.slack, enabled: true } } }, token: w.gh.token, storeCredentials: {}, slackRun });
+    const snap = await publisher.refresh({ live: true });
     const lm = snap.features.find((f) => f.feature.id === 'mobile-rewards').last_mile;
     const { ios, android } = lm.apps[0].platforms;
     assert.equal(ios.label, 'released in 3.4.0 to 20% of iOS users');
@@ -226,8 +226,8 @@ test('publisher reads Slack and commits snapshots; a teammate without Slack or s
     assert.ok(!/crash spike|lunch|phased release started/.test(repo), 'no message text in the shared repo');
 
     // A teammate: no Slack, no store key.
-    const reader = createApp({ config, token: w.gh.token, storeCredentials: {}, slackRun: async () => assert.fail('a reader never runs Claude') });
-    const theirs = await reader.refresh();
+    const reader = createApp({ alwaysLive: true, config, token: w.gh.token, storeCredentials: {}, slackRun: async () => assert.fail('a reader never runs Claude') });
+    const theirs = await reader.refresh({ live: true });
     const f = theirs.features.find((x) => x.feature.id === 'mobile-rewards');
     const c = f.last_mile.apps[0].platforms.ios;
     assert.equal(c.label, 'released in 3.4.0 to 20% of iOS users');
@@ -238,9 +238,9 @@ test('publisher reads Slack and commits snapshots; a teammate without Slack or s
     assert.equal(f.sources.find((t) => t.key === 'store:acme-mobile:ios').from_snapshot, true);
 
     // Slack failing on the publisher's machine: the snapshot stands in, with the reason.
-    const broken = createApp({ config: { ...config, sources: { ...config.sources, slack: { ...DEFAULTS.sources.slack, enabled: true, intervalMinutes: 0 } } }, token: w.gh.token, storeCredentials: {},
+    const broken = createApp({ alwaysLive: true, config: { ...config, sources: { ...config.sources, slack: { ...DEFAULTS.sources.slack, enabled: true, intervalMinutes: 0 } } }, token: w.gh.token, storeCredentials: {},
       slackRun: async () => 'not json' });
-    const b = (await broken.refresh()).features.find((x) => x.feature.id === 'mobile-rewards').last_mile.apps[0].platforms.ios;
+    const b = (await broken.refresh({ live: true })).features.find((x) => x.feature.id === 'mobile-rewards').last_mile.apps[0].platforms.ios;
     assert.equal(b.from_snapshot, true);
     assert.match(b.message, /wasn't the JSON/);
 
