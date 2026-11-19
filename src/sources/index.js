@@ -44,8 +44,9 @@ const evidenceKey = evidenceId;
 // Builds a reader for one refresh. read() never throws: a failed read comes back as
 // { state: 'unavailable' | 'no_access', message, lastSuccessfulReadAt }.
 // jiraSnapshots: parsed jira-snapshots/. jiraRun: replaces the Claude Code call for Jira (tests).
-// live: false reads nothing: each item is what the last live read said (a newer Jira team snapshot,
-// which comes with the shared repo, wins), or "not read yet".
+// live: false reads (almost) nothing: each item is what the last live read said (a newer Jira team
+// snapshot, which comes with the shared repo, wins). A GitHub PR or issue never read before (just
+// linked to a step) is read once: one API call, no Claude. A new Jira ticket waits for Refresh data.
 export function createEvidenceReader({ config, tokens, fetchImpl, jiraSnapshots = [], jiraRun, live = true }) {
   const adapters = {};
   for (const [name, def] of Object.entries(SOURCES)) {
@@ -82,10 +83,12 @@ export function createEvidenceReader({ config, tokens, fetchImpl, jiraSnapshots 
     return { ...base, state: 'unavailable', message: NOT_READ_YET, lastSuccessfulReadAt: lastReads[key] || null, unavailableSince: null };
   }
 
+  let readAny = live; // save only when something was read live
   async function read(evidence, opts) {
     const key = evidenceKey(evidence);
     const base = { ...evidence, link: adapters[evidence.source].linkFor(evidence) };
-    if (!live) return cachedRead(evidence, key, base);
+    if (!live && (results[key] || evidence.source !== 'github')) return cachedRead(evidence, key, base);
+    readAny = true;
     const r = await readLive(evidence, opts, key, base);
     // Without the definition fields: those come from the definitions on every refresh.
     const { link, state, message, readAt, lastSuccessfulReadAt, unavailableSince, ...rest } = r;
@@ -119,7 +122,7 @@ export function createEvidenceReader({ config, tokens, fetchImpl, jiraSnapshots 
   }
 
   function save() {
-    if (!live) return;
+    if (!readAny) return;
     try {
       writeJson(lastReadsFile(), lastReads);
       writeJson(failingFile(), failing);

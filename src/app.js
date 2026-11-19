@@ -176,7 +176,8 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
       s.team_dependencies = def ? teamDepsOf(def) : null;
       s.team_warnings = teamRegistry.warningsFor(s.feature.id);
     }
-    // Last mile: is the work deployed and turned on? Same refresh, same credentials, read live.
+    // Last mile: is the work deployed and turned on? Read live with the same credentials on a live
+    // refresh; otherwise what the last live read saved (a feature added since has none yet).
     const lastMileRun = createLastMile({ config: { ...config, flagPlatform: flagPlatform.platform }, githubClient: github, flagsmithKey: flagsmithApiKey, statsigKey: statsigApiKey, storeCredentials, storeConnectors, fetchImpl, slackRun });
     let lastMile, flagSource, sourcesReadAt;
     if (live) {

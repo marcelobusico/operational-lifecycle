@@ -262,6 +262,20 @@ test('a plain refresh reuses the last live read; Refresh data reads the sources 
   assert.deepEqual(feature(cached).last_mile, feature(live).last_mile);
   assert.equal(w.gh.state.commits.length, commits);
 
+  // A PR just linked to a step (never read here) is read once on a plain refresh: GitHub, no Claude.
+  const resultsFile = path.join(home, 'cache', 'evidence-results.json');
+  const saved = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
+  const prKeys = Object.keys(saved).filter((k) => !/BOOK-|OPS-/.test(k));
+  assert.ok(prKeys.length, 'the feature has a PR');
+  for (const k of prKeys) delete saved[k];
+  fs.writeFileSync(resultsFile, JSON.stringify(saved));
+  urls.length = 0;
+  const linked = await mk(moved).refresh();
+  assert.equal(calls.length, 1, 'still no Claude run');
+  assert.ok(urls.some((u) => u.includes(CATALOG)), 'the new PR is read');
+  assert.equal(feature(linked).steps[0].state, feature(live).steps[0].state);
+  assert.ok(prKeys.every((k) => JSON.parse(fs.readFileSync(resultsFile, 'utf8'))[k]), 'and saved for the next plain refresh');
+
   // Refresh data: read again, and the new state shows.
   const again = await mk(moved).refresh({ live: true });
   assert.equal(calls.length, 2);
