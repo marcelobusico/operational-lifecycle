@@ -1851,9 +1851,9 @@ function renderFeatureEdit(mode, id, project = '') {
     <form id="featureform" class="cform section" novalidate>
       <div class="two">
         <div class="card fbox">
-          ${mode === 'create' ? `<label>Feature id <span class="req">required</span><input name="id" value="${esc(d.id)}" placeholder="redeem-rewards" class="mono"${editInvalid('id')}>
+          <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}"${mode === 'create' ? ' placeholder="Redeem rewards" autocomplete="off"' : ''}${editInvalid('name')}></label>${editMessages('name')}
+          ${mode === 'create' ? `<label>Feature id <span class="muted small">suggested from the name</span><input name="id" value="${esc(d.id)}" placeholder="redeem-rewards" class="mono"${editInvalid('id')}>
             <span class="muted small">Lowercase letters, digits and dashes. It names the file (features/&lt;id&gt;.yaml) and can't be changed later.</span></label>${editMessages('id')}` : ''}
-          <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}"${editInvalid('name')}></label>${editMessages('name')}
           <div class="row3"><label>Owner <span class="req">required</span><input name="owner" value="${esc(d.owner)}" placeholder="Mobile team or @handle"${editInvalid('owner')}></label>
             <label>Target date <span class="muted small">optional</span><input type="date" name="target_date" value="${esc(d.target_date)}"${editInvalid('target_date')}></label></div>
           ${editMessages('owner')}${editMessages('target_date')}
@@ -1979,6 +1979,14 @@ function wireFeatureEdit(root) {
     if (stale && pub) pub.disabled = true;
     if (stale && f.preview) form.querySelector('.freview').innerHTML = '<p class="muted">You changed the form since the last review. Press <b>Review changes</b> again.</p>';
   };
+  // New feature: the id follows the name until the person edits the id themselves (as for projects).
+  if (f.mode === 'create') {
+    const idField = form.querySelector('[name="id"]');
+    form.querySelector('[name="name"]').addEventListener('input', (e) => {
+      if (!f.idTouched) idField.value = slugify(e.target.value);
+    });
+    idField.addEventListener('input', () => { f.idTouched = idField.value.trim() !== ''; });
+  }
   form.addEventListener('input', sync);
   form.addEventListener('change', sync);
   form.addEventListener('submit', (e) => { e.preventDefault(); sync(); previewFeature(); });
