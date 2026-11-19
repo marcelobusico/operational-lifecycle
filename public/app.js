@@ -3983,7 +3983,8 @@ function renderResult(r, note = '') {
       <p><a href="${escUrl(r.compare_url)}" target="_blank" rel="noopener">View the changes on GitHub</a></p>
       ${ciWarning(r.ci)}<div class="upd-actions">${upgradeAction(r)}</div>`;
   }
-  updBody.innerHTML = (note ? `<p class="upd-ok" role="status">${note}</p>` : '') + html;
+  // The title and close button stay at the top; a note (e.g. "Updated…") goes right below them.
+  updBody.innerHTML = note ? html.replace('</header>', () => `</header><p class="upd-ok" role="status">${note}</p>`) : html;
 }
 
 function renderConfirm(r) {
