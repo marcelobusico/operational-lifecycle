@@ -696,7 +696,8 @@ main { max-width: 1320px; }
 .f-lbl { font: 600 12.5px var(--font-sans); fill: var(--foreground); text-anchor: middle; }
 .f-sub { font: 400 11px var(--font-sans); fill: var(--muted-foreground); text-anchor: middle; }
 .f-sub.c { fill: var(--c); font-weight: 500; }
-.f-drawer { padding: 16px; display: grid; gap: 14px; min-width: 0; }
+/* minmax(0, 1fr): a long word, link or id wraps instead of widening the card past its edge. */
+.f-drawer { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; min-width: 0; overflow-wrap: anywhere; }
 .f-drawer .kick, .f-drawer > div > .kick { font-size: 10.5px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-foreground); }
 .f-drawer h3 { margin: 2px 0 0; font-size: 17px; letter-spacing: -.01em; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .f-kv { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px 12px; font-size: 13px; align-items: center; margin: 0; }
@@ -708,7 +709,7 @@ main { max-width: 1320px; }
 .f-rows a { display: flex; align-items: center; gap: 9px; min-width: 0; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .f-rows li > span { font-size: 11.5px; color: var(--muted-foreground); white-space: nowrap; }
 .f-rows .d { width: 8px; height: 8px; border-radius: 50%; background: var(--s); flex: none; }
-.f-callout { border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, var(--s) var(--tint), transparent); font-size: 13px; display: grid; gap: 3px; }
+.f-callout { border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, var(--s) var(--tint), transparent); font-size: 13px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; overflow-wrap: anywhere; }
 .f-callout b { color: var(--s); font-weight: 600; }
 .f-fold { font-size: 12.5px; color: var(--muted-foreground); }
 .f-fold > summary { cursor: pointer; color: var(--foreground); font-weight: 500; list-style: none; display: inline-flex; align-items: center; gap: 6px; }
