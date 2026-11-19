@@ -854,6 +854,9 @@ section > .f-none.small { padding: 0 16px 14px; margin: 0; }
 .nav a[aria-current="page"] { background: var(--accent); color: var(--foreground); box-shadow: none; }
 .nav a[aria-current="page"]::before { content: ""; position: absolute; left: -12px; top: 7px; bottom: 7px; width: 3px; border-radius: 0 3px 3px 0; background: var(--brand-lime); }
 .nav a[aria-current="page"] svg { color: var(--brand-lime); }
+/* Apps and Teams (the shared definitions) sit apart from the views above them. */
+.nav .nav-sep { height: 1px; margin: 8px 10px; border: 0; background: var(--border); }
+.rail .nav .nav-sep { margin: 8px 6px; }
 .sidebar .ncount { background: var(--brand-lime); color: var(--brand-navy); }
 .side-features .sub { border-left-color: #ffffff1f; }
 .ghost:hover { background: var(--muted); }
