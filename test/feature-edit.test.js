@@ -341,3 +341,57 @@ test('editing a project renames it (same id and file, comments kept); a stale fo
   assert.equal((await ana.put('/api/projects/shelf', { draft: { name: '', owner: '', description: '' } })).status, 400);
   assert.equal((await cy.put('/api/projects/shelf', { draft: { name: 'X' } })).status, 403);
 });
+
+test('apps: created from LifeCycle with stores and a Slack channel, edited keeping comments, refused when stale, deleted once no feature lists it', async () => {
+  const draft = { name: 'Reader', owner: 'Mobile team', repo: 'team/reader-mobile', ios_store_id: '1234567890', android_store_id: '', slack: '#mobile-releases', hint: 'iOS messages mention the App Store' };
+  const noStore = await ana.post('/api/apps', { draft: { ...draft, ios_store_id: '' } });
+  assert.equal(noStore.status, 400);
+  assert.equal(noStore.body.errors[0].field, 'ios_store_id');
+  const badChannel = await ana.post('/api/apps', { draft: { ...draft, slack: 'mobile releases' } });
+  assert.equal(badChannel.status, 400);
+  assert.equal(badChannel.body.errors[0].field, 'slack');
+  assert.equal((await cy.post('/api/apps', { draft })).status, 403);
+
+  const r = await ana.post('/api/apps', { draft });
+  assert.equal(r.status, 201, r.body.message);
+  assert.equal(r.body.id, 'reader', 'the id comes from the name');
+  assert.equal(repoFile('apps/reader.yaml'), [
+    'id: reader', 'name: Reader', 'owner: Mobile team', 'repo: team/reader-mobile', 'platforms:', '  ios: { store: app_store, store_id: "1234567890" }',
+    'release_channel:', '  slack: "#mobile-releases"', '  hint: iOS messages mention the App Store', ''].join('\n'));
+  assert.equal(commitsFor('apps/reader.yaml')[0].by, 'ana');
+  const listed = (await bo.get('/api/roadmap')).apps.find((a) => a.id === 'reader');
+  assert.deepEqual(listed.release_channel, { slack: '#mobile-releases', hint: 'iOS messages mention the App Store' });
+
+  // A comment written by hand survives an edit; the edit adds Android and drops the hint.
+  gh.state.files.get(DATA).set('apps/reader.yaml', `# Reader app, owned by mobile.\n${repoFile('apps/reader.yaml')}`);
+  const base = { ...draft };
+  const e = await ana.put('/api/apps/reader', { draft: { ...draft, android_store_id: 'com.team.reader', hint: '' }, base });
+  assert.equal(e.status, 200, e.body.message);
+  assert.match(repoFile('apps/reader.yaml'), /^# Reader app, owned by mobile\.\n/);
+  assert.match(repoFile('apps/reader.yaml'), /android: \{ store: google_play, store_id: com\.team\.reader \}/);
+  assert.doesNotMatch(repoFile('apps/reader.yaml'), /hint:/);
+  assert.match(commitsFor('apps/reader.yaml').at(-1).message, /^Edit app reader: Android, Slack hint \(by @ana from LifeCycle\)$/);
+  const stale = await bo.put('/api/apps/reader', { draft: { ...draft, name: 'Reader app' }, base });
+  assert.equal(stale.status, 409);
+  assert.match(repoFile('apps/reader.yaml'), /com\.team\.reader/, "ana's change is kept");
+
+  // Delete: refused while a feature ships in it, then removed.
+  gh.state.files.get(DATA).set('features/reader-sync.yaml', 'id: reader-sync\nname: Reader sync\nowner: Mobile team\napps:\n  - id: reader\n    first_version: { ios: 3.4.0 }\nsteps: []\n');
+  const busy = await ana.post('/api/apps/reader/delete');
+  assert.equal(busy.status, 409);
+  assert.deepEqual(busy.body.features, [{ id: 'reader-sync', name: 'Reader sync' }]);
+  gh.state.files.get(DATA).delete('features/reader-sync.yaml');
+  const del = await ana.post('/api/apps/reader/delete');
+  assert.equal(del.status, 200, del.body.message);
+  assert.equal(repoFile('apps/reader.yaml'), undefined);
+});
+
+test('editing one field of a hand-written app leaves the rest of the file as it was written', async () => {
+  const text = 'id: shelf-app\nname: Shelf\nrepo: team/shelf\nplatforms:\n  # The store listing is managed by the growth team.\n  ios:\n    store: app_store\n    store_id: "987654321"\n';
+  gh.state.files.get(DATA).set('apps/shelf-app.yaml', text);
+  await ana.get('/api/roadmap');
+  const base = { name: 'Shelf', owner: '', repo: 'team/shelf', release_tag: '', ios_store_id: '987654321', android_store_id: '', slack: '', hint: '' };
+  const r = await ana.put('/api/apps/shelf-app', { draft: { ...base, slack: '#shelf-releases' }, base });
+  assert.equal(r.status, 200, r.body.message);
+  assert.equal(repoFile('apps/shelf-app.yaml'), `${text}release_channel:\n  slack: "#shelf-releases"\n`);
+});

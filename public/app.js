@@ -125,6 +125,9 @@ function parseRoute() {
   }
   if (h === '#/alerts') return { route: 'alerts' };
   if (h === '#/teams') return { route: 'teams' };
+  if (h === '#/apps') return { route: 'apps' };
+  if (h === '#/apps/new') return { route: 'app-edit', id: null };
+  if ((m = h.match(/^#\/app\/([^/]+)\/edit$/))) return { route: 'app-edit', id: decodeURIComponent(m[1]) };
   if (h === '#/teams/new') return { route: 'team-edit', mode: 'create', id: null };
   if ((m = h.match(/^#\/team\/(.+)\/edit$/))) return { route: 'team-edit', mode: 'update', id: decodeURIComponent(m[1]) };
   if ((m = h.match(/^#\/team\/(.+)$/))) return { route: 'team', id: decodeURIComponent(m[1]) };
@@ -150,7 +153,7 @@ document.addEventListener('click', (e) => {
 
 function renderChrome(r) {
   rememberProject(r);
-  const navRoute = r.route === 'project' || r.route === 'feature' || (r.route === 'project-new' && r.editId) ? 'roadmap' : r.route === 'feature-edit' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route;
+  const navRoute = r.route === 'project' || r.route === 'feature' || (r.route === 'project-new' && r.editId) ? 'roadmap' : r.route === 'feature-edit' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route === 'app-edit' ? 'apps' : r.route;
   if (r.route === 'alerts') alertsAcknowledged = true;
   const unseenCount = alertView ? alertView.alerts.filter((a) => !isSeen(a)).length : 0;
   const nb = $('#alert-count');
@@ -192,6 +195,8 @@ function renderChrome(r) {
       : `<a href="#/roadmap">Roadmap</a>${sep}<a href="${href(r.id)}">${esc(f?.feature.name || r.id)}</a>${sep}<span class="cur">Edit</span>`;
   } else if (r.route === 'project-new' && r.editId) {
     crumbs = `<a href="#/roadmap">Roadmap</a>${sep}${crumbProject(r.editId)}${sep}<span class="cur">Edit</span>`;
+  } else if (r.route === 'app-edit') {
+    crumbs = `<a href="#/apps">Apps</a>${sep}<span class="cur">${r.id ? `${esc(appById(r.id)?.name || r.id)} · Edit` : 'New app'}</span>`;
   } else if (r.route === 'project') {
     crumbs = `<a href="#/roadmap">Roadmap</a>${sep}<span class="cur">${esc(projectById(r.id)?.project.name || r.id)}</span>`;
   } else {
@@ -201,7 +206,7 @@ function renderChrome(r) {
         ? `<a href="#/teams">Teams</a>${sep}${r.mode === 'create' ? '<span class="cur">New team</span>' : `<a href="#/team/${encodeURIComponent(r.id)}">${esc(teamName(r.id))}</a>${sep}<span class="cur">Edit</span>`}`
       : r.route === 'team'
         ? `<a href="#/teams">Teams</a>${sep}<span class="cur">${esc(teamName(r.id))}</span>`
-        : `<span class="cur">${{ home: 'Home', roadmap: 'Roadmap', map: 'Dependency map', ask: 'Ask', alerts: 'Alerts', teams: 'Teams', 'project-new': 'New project' }[r.route]}</span>`;
+        : `<span class="cur">${{ home: 'Home', roadmap: 'Roadmap', map: 'Dependency map', ask: 'Ask', alerts: 'Alerts', teams: 'Teams', 'project-new': 'New project', apps: 'Apps' }[r.route]}</span>`;
   }
   // No breadcrumb bar: the trail only names the browser tab.
   const trail = document.createElement('div');
@@ -313,6 +318,8 @@ function render() {
     map: () => renderMap(),
     alerts: () => renderAlertsFlow(),
     teams: () => renderTeamsFlow(),
+    apps: () => renderApps(),
+    'app-edit': () => renderAppEdit(r.id),
     team: () => renderTeam(r.id),
     'team-edit': () => renderTeamEdit(r.mode, r.id),
     'project-new': () => renderProjectNew(r.editId || null),
@@ -329,6 +336,8 @@ function render() {
   wireAsk(main);
   if (r.route === 'feature') wireFeatureFlow(r);
   if (r.route === 'teams') wireTeamsFlow(main);
+  if (r.route === 'app-edit') wireAppEdit(main);
+  if (r.route !== 'app-edit') appForm = null;
   if (r.route === 'project-new') wireProjectNew(main);
   if (r.route !== 'project-new') projectForm = null;
   if (r.route !== 'team-edit') teamForm = null;
@@ -537,6 +546,120 @@ function wireProjectEdit(form, f) {
     f.result = r;
     render();
     $('#main [aria-invalid="true"]')?.focus();
+  });
+}
+
+// ---------- mobile apps: apps/<id>.yaml (stores and Slack release channel) ----------
+
+const appById = (id) => snapshot?.apps?.find((a) => a.id === id) || null;
+let appForm = null; // { id (null = new), draft, base, idTouched, errors, result, busy }
+const APP_FIELDS = ['name', 'owner', 'repo', 'release_tag', 'ios_store_id', 'android_store_id', 'slack', 'hint'];
+const appDraftOf = (a) => ({ id: a.id, name: a.name || '', owner: a.owner || '', repo: a.repo || '', release_tag: a.release_tag || '',
+  ios_store_id: a.platforms?.ios?.store_id || '', android_store_id: a.platforms?.android?.store_id || '',
+  slack: a.release_channel?.slack || '', hint: a.release_channel?.hint || '' });
+
+function renderApps() {
+  const apps = [...(snapshot.apps || [])].sort((a, b) => a.name.localeCompare(b.name));
+  const action = editAccess?.can_edit ? '<a class="btn primary" href="#/apps/new">New app</a>'
+    : editAccess ? `<p class="muted small f-ro" role="note"><b>Read-only.</b> ${esc(editAccess.reason || '')}</p>` : '';
+  const featName = (id) => snapshot.features.find((f) => f.feature.id === id)?.feature.name || id;
+  const card = (a) => `<li class="card team-def"><div class="f-cardh"><h3>${esc(a.name)}</h3><span class="f-src mono">${esc(a.id)}</span>
+      ${editAccess?.can_edit ? `<a class="btn small" href="#/app/${encodeURIComponent(a.id)}/edit">Edit</a>` : ''}</div>
+    <p class="small">${[a.platforms?.ios ? `iOS <span class="mono">${esc(a.platforms.ios.store_id)}</span>` : '', a.platforms?.android ? `Android <span class="mono">${esc(a.platforms.android.store_id)}</span>` : ''].filter(Boolean).join(' · ')}</p>
+    <p class="muted small">${a.release_channel?.slack ? `Releases announced in <span class="mono">${esc(a.release_channel.slack)}</span>` : 'No Slack release channel'}${a.owner ? ` · ${esc(a.owner)}` : ''} · <span class="mono">${esc(a.repo)}</span></p>
+    <p class="muted small">${a.features.length ? `Shipped by ${a.features.map((id) => `<a href="${href(id)}">${esc(featName(id))}</a>`).join(', ')}` : 'No feature lists it yet (apps: in a feature definition).'}</p></li>`;
+  return `<div class="fhead"><div><p class="kicker">Mobile apps</p><h1>Apps</h1></div>${action}</div>
+    <p class="lede">Where each app is published and the Slack channel where its releases are announced. LifeCycle reads the release status from the store, or from that channel on the machine that reads Slack. Each app is a file in the shared repo (<code>apps/&lt;id&gt;.yaml</code>).</p>
+    ${apps.length ? `<ul class="team-grid section">${apps.map(card).join('')}</ul>` : '<div class="card empty section"><strong>No apps yet</strong>Add one with <b>New app</b> to follow its releases.</div>'}`;
+}
+
+function renderAppEdit(id) {
+  if (appForm && appForm.id !== id) appForm = null;
+  if (!appForm) {
+    const a = id ? appById(id) : null;
+    if (id && !a) return `<p class="kicker">App</p><h1 class="mono">${esc(id)}</h1><div class="card empty section"><strong>Not defined</strong>No app with this id exists in the shared repo. <a href="#/apps">All apps</a></div>`;
+    const draft = a ? appDraftOf(a) : { id: '', name: '', owner: '', repo: '', release_tag: '', ios_store_id: '', android_store_id: '', slack: '', hint: '' };
+    appForm = { id, draft, base: a ? { ...draft } : null, idTouched: Boolean(a), errors: [], result: null, busy: false };
+  }
+  const f = appForm, d = f.draft;
+  const title = id ? esc(f.base.name || id) : 'New app';
+  if (editAccess && !editAccess.can_edit) {
+    return `<p class="kicker">Apps</p><h1>${title}</h1><div class="banner st-unavailable section" role="status"><span class="ico">!</span><div><b>You can't edit apps.</b> ${esc(editAccess.reason || '')}</div></div>`;
+  }
+  const err = (field) => (f.errors || []).filter((e) => e.field === field).map((e) => `<p class="ferr" role="alert">${esc(e.message)}</p>`).join('');
+  const bad = (field) => ((f.errors || []).some((e) => e.field === field) ? ' aria-invalid="true"' : '');
+  const input = (name, label, note, extra = '') => `<label>${label} ${note}<input name="${name}" value="${esc(d[name])}"${extra}${bad(name)}></label>${err(name)}`;
+  const opt = '<span class="muted small">optional</span>';
+  const local = snapshot.definitions.source.startsWith('local:');
+  return `<p class="kicker">${id ? 'Edit app' : 'Apps'}</p><h1>${title}</h1>
+    <p class="lede">${id ? 'Saving' : 'Creating it'} ${local ? 'saves' : 'commits'} <code>apps/${esc(id || d.id || '<id>')}.yaml</code>${local ? '' : ' as your GitHub user'}. Store ids are public identifiers, never keys: LifeCycle's store access is set up per machine (<code>lifecycle setup --extras</code>).</p>
+    ${f.result ? `<div class="banner st-blocked section" role="alert"><span class="ico">!</span><div>${esc(f.result.message || '')}</div></div>` : ''}
+    <form id="appform" class="cform section" novalidate><div class="card fbox">
+      ${input('name', 'Name', '<span class="req">required</span>', ' placeholder="Reader" autocomplete="off"')}
+      ${id ? '' : input('id', 'Id', '<span class="muted small">suggested from the name; names the file and can\'t be changed later</span>', ' class="mono" placeholder="reader-app"')}
+      <div class="row3">${input('owner', 'Owner', opt, ' placeholder="Mobile team"')}${input('repo', 'Repo', '<span class="req">required</span>', ' class="mono" placeholder="your-org/reader-mobile"')}</div>
+      <fieldset class="fld"><legend>Stores <span class="muted small">at least one</span></legend>
+        <div class="row3">${input('ios_store_id', 'iOS: App Store id', '<span class="muted small">the Apple ID number in App Store Connect</span>', ' class="mono" placeholder="1234567890"')}
+        ${input('android_store_id', 'Android: Google Play package', '', ' class="mono" placeholder="com.yourorg.reader"')}</div>
+      </fieldset>
+      ${input('release_tag', 'Release tags', '<span class="muted small">optional; how the repo names them, with {version}</span>', ' class="mono" placeholder="v{version}"')}
+      <fieldset class="fld"><legend>Slack release channel <span class="muted small">optional; where a bot or people announce versions, reviews and rollouts</span></legend>
+        ${input('slack', 'Channel', '<span class="muted small">#name or channel id</span>', ' class="mono" placeholder="#mobile-releases"')}
+        <label>Hint for reading it ${opt}<textarea name="hint" rows="2" placeholder="iOS messages mention the App Store"${bad('hint')}>${esc(d.hint)}</textarea></label>${err('hint')}
+        <p class="muted small">Read on the machine that reads Slack (<code>lifecycle setup --extras</code> → Slack); check it with <code>lifecycle slack-check --app ${esc(id || d.id || '<id>')}</code>.</p>
+      </fieldset>
+      <div class="factions"><button class="btn primary" type="submit"${f.busy ? ' disabled' : ''}>${f.busy ? 'Saving…' : id ? 'Save' : 'Create app'}</button><a class="btn" href="#/apps">Cancel</a>
+        ${id ? `<button type="button" class="btn danger" data-app-delete${f.busy ? ' disabled' : ''}>Delete app</button>` : ''}</div>
+    </div></form>`;
+}
+
+function wireAppEdit(root) {
+  const form = root.querySelector('#appform');
+  if (!form) return;
+  const f = appForm;
+  const read = () => {
+    const v = (n) => form.querySelector(`[name="${n}"]`)?.value ?? '';
+    f.draft = { ...Object.fromEntries(APP_FIELDS.map((k) => [k, v(k)])), id: f.id || v('id') };
+  };
+  if (!f.id) {
+    const idField = form.querySelector('[name="id"]');
+    form.querySelector('[name="name"]').addEventListener('input', (e) => { if (!f.idTouched) idField.value = slugify(e.target.value); });
+    idField.addEventListener('input', () => { f.idTouched = idField.value.trim() !== ''; });
+  }
+  form.addEventListener('input', read);
+  const done = async (r) => {
+    f.busy = false;
+    if (['published', 'unchanged'].includes(r.outcome)) {
+      appForm = null;
+      if (r.outcome === 'published') await load();
+      toast(r.message);
+      location.hash = '#/apps';
+      return;
+    }
+    f.errors = r.errors || [];
+    f.result = r;
+    render();
+    $('#main [aria-invalid="true"]')?.focus();
+  };
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    read();
+    f.busy = true; f.errors = []; f.result = null;
+    render();
+    await done(f.id ? await sendFeature(`/api/apps/${encodeURIComponent(f.id)}`, 'PUT', { draft: f.draft, base: f.base })
+      : await sendFeature('/api/apps', 'POST', { draft: f.draft }));
+  });
+  form.querySelector('[data-app-delete]')?.addEventListener('click', async () => {
+    const a = appById(f.id);
+    const names = (a?.features || []).map((id) => snapshot.features.find((x) => x.feature.id === id)?.feature.name || id);
+    if (names.length) {
+      alert(`${a.name} is listed by ${names.length === 1 ? '1 feature' : `${names.length} features`}:\n\n${names.map((n) => `• ${n}`).join('\n')}\n\nRemove the app from ${names.length === 1 ? 'it' : 'them'} first (apps: in the feature definition), then delete the app.`);
+      return;
+    }
+    if (!confirm(`Delete ${a?.name || f.id}? ${a?.file || 'Its file'} is removed from the shared repo for everyone.`)) return;
+    f.busy = true;
+    render();
+    await done(await sendFeature(`/api/apps/${encodeURIComponent(f.id)}/delete`, 'POST', {}));
   });
 }
 
@@ -1724,7 +1847,7 @@ let featureEdit = null; // the open form: { mode, id, def, draft, base, errors, 
 async function loadEditAccess() {
   try { editAccess = await (await fetch('/api/features-edit-access', { cache: 'no-store' })).json(); } catch { editAccess = null; }
   const r = parseRoute();
-  if (['feature', 'roadmap', 'project', 'project-new'].includes(r.route)) render();
+  if (['feature', 'roadmap', 'project', 'project-new', 'apps', 'app-edit'].includes(r.route)) render();
 }
 
 const emptyDraft = (project = '') => ({ id: '', name: '', owner: '', description: '', project, target_date: '', depends_on: [], services: [], flags: [], steps: [] });
