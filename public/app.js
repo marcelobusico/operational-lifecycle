@@ -3764,7 +3764,7 @@ function renderTeamEdit(mode, id) {
     <form id="teamform" class="cform section" novalidate><div class="two"><div class="card fbox">
       <fieldset class="fld"><legend>Team</legend>
         <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}" placeholder="Wishlist"></label>${err('name')}
-        ${mode === 'create' ? `<label>Id <span class="muted small">fixed once created: lowercase letters, digits and dashes</span><input name="id" value="${esc(d.id)}" placeholder="${esc(slugify(d.name) || 'wishlist')} (from the name if left empty)"></label>${err('id')}`
+        ${mode === 'create' ? `<label>Id <span class="muted small">suggested from the name; fixed once created: lowercase letters, digits and dashes</span><input name="id" value="${esc(d.id)}" placeholder="wishlist"></label>${err('id')}`
           : `<p class="muted small">Id <code>${esc(d.id)}</code> stays the same when you rename, so nothing that points to it breaks.</p>`}
         <label>Description <span class="muted small">optional</span><input name="description" value="${esc(d.description)}"></label>${err('description')}
         <label>Aliases <span class="muted small">other spellings already used in features, comma separated</span><input name="aliases" value="${esc(listText(d.aliases))}" placeholder="Wishlist team"></label>${err('aliases')}
@@ -3853,6 +3853,13 @@ function wireTeams(root) {
   }));
   const form = root.querySelector('#teamform');
   if (form) {
+    // New team: the id follows the name until the person edits the id themselves (as for projects).
+    const idField = teamForm.mode === 'create' ? form.querySelector('[name="id"]') : null;
+    if (idField) {
+      teamForm.idTouched ??= Boolean(idField.value) && idField.value !== slugify(form.querySelector('[name="name"]').value);
+      form.querySelector('[name="name"]').addEventListener('input', (e) => { if (!teamForm.idTouched) idField.value = slugify(e.target.value); });
+      idField.addEventListener('input', () => { teamForm.idTouched = idField.value.trim() !== ''; });
+    }
     form.addEventListener('input', () => { teamForm.draft = readTeamForm(form); teamForm.preview = null; root.querySelector('#teamform [type=submit]').disabled = true; });
     form.querySelector('[data-team-preview]').addEventListener('click', async () => {
       teamForm.draft = readTeamForm(form);
