@@ -94,7 +94,8 @@ elif [ -n "$CA_CHOICE" ] && ! [ "$CA_CHOICE" -ef "$CA_SAVED" ]; then
     || fail "The certificate file $CA_CHOICE is missing or is not a PEM certificate (a text file starting with -----BEGIN CERTIFICATE-----)." "Check the path, or ask IT for the root certificate in PEM format."
   cp "$CA_CHOICE" "$CA_SAVED" && chmod 644 "$CA_SAVED" || fail "Could not copy $CA_CHOICE into $LC_HOME." "Check free disk space and try again."
 fi
-CA=""
+CA=""; CA_FROM=""
+[ -z "${LIFECYCLE_CA_FILE:-}" ] && [ -n "${NODE_EXTRA_CA_CERTS:-}" ] && ! [ "$NODE_EXTRA_CA_CERTS" -ef "$CA_SAVED" ] && CA_FROM=", from NODE_EXTRA_CA_CERTS"
 if [ -s "$CA_SAVED" ]; then
   cat /etc/ssl/cert.pem "$CA_SAVED" > "$CA_BUNDLE" 2>/dev/null || cp "$CA_SAVED" "$CA_BUNDLE"
   CA=yes; export NODE_EXTRA_CA_CERTS="$CA_SAVED"
@@ -123,11 +124,11 @@ fi
 if [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
   printf '{\n  "commit": "%s",\n  "date": "%s",\n  "installed_at": "%s"\n}\n' "$COMMIT" "$COMMIT_DATE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$APP/installed-commit.json"
   ok "LifeCycle's files are in $(t "$APP") (commit ${COMMIT:0:7} of main)"
-  [ -z "$CA" ] || ok "Your network's root certificate is trusted (saved as $(t "$CA_SAVED"))"
+  [ -z "$CA" ] || ok "Your network's root certificate is trusted (saved as $(t "$CA_SAVED")$CA_FROM)"
 else
   [ "$SRC" = "$APP" ] || rm -f "$APP/installed-commit.json"
   ok "LifeCycle's files are in $(t "$APP")"
-  [ -z "$CA" ] || ok "Your network's root certificate is trusted (saved as $(t "$CA_SAVED"))"
+  [ -z "$CA" ] || ok "Your network's root certificate is trusted (saved as $(t "$CA_SAVED")$CA_FROM)"
   info "This copy doesn't say which commit it is, so the app shows \"Installed version unknown\" until its first update."
 fi
 
@@ -184,7 +185,7 @@ case "$CANDIDATE" in /opt/homebrew/bin/node|/usr/local/bin/node|/opt/local/bin/n
 NPM_CLI="$(dirname "$(dirname "$REAL")")/lib/node_modules/npm/bin/npm-cli.js"
 [ -f "$NPM_CLI" ] || fail "Your Node.js ($REAL) has no npm next to it ($NPM_CLI)." "Install npm with that Node.js, or leave LIFECYCLE_NODE out to use LifeCycle's private copy."
 printf '%s\n' "$NODE" > "$NODE_PATH_FILE"
-rm -rf "$RUNTIME"
+DROP_RUNTIME=yes # the private copy is removed only once the install has finished (the service may still run on it)
 ok "Using your Node.js $NODE_VERSION at $(t "$NODE") with its npm (nothing downloaded)"
 case "$REAL" in
   */.nvm/*|*/fnm*|*/.volta/*|*/.asdf/*|*/.nodenv/*|*/mise/*|*/n/versions/*)
@@ -240,6 +241,7 @@ else
   [ -n "${LIFECYCLE_NO_OPEN:-}" ] || open "http://lifecycle.localhost:$PORT"
 fi
 
+[ -z "${DROP_RUNTIME:-}" ] || rm -rf "$RUNTIME"
 L="$(runnable "$BIN/lifecycle")"
 if [ "$CONNECTED" = yes ]; then
   printf '\n%s✓ LifeCycle is installed.%s\n' "$G" "$N"

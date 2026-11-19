@@ -43,7 +43,7 @@ say() { printf '%s\n' "$*"; }
 die() { printf '✗ %s\n' "$1" >&2; [ -n "${2:-}" ] && printf '  What to do: %s\n' "$2" >&2; exit 1; }
 need_node() {
   [ -x "$NODE" ] && return 0
-  [ -n "$OWN_NODE" ] && die "The Node.js LifeCycle was set to use is gone ($NODE)." "Run the installer again with the Node.js to use: LIFECYCLE_NODE=system (the one on your PATH), LIFECYCLE_NODE=/path/to/node, or LIFECYCLE_NODE=private (LifeCycle's own copy)."
+  [ -n "$OWN_NODE" ] && die "The Node.js LifeCycle was set to use is gone ($NODE)." "Run the installer again with the Node.js to use, for example: LIFECYCLE_NODE=system bash $(short "$APP/install.sh")   (or LIFECYCLE_NODE=/path/to/node, or LIFECYCLE_NODE=private for LifeCycle's own copy)"
   die "LifeCycle's Node.js is missing ($NODE)." "Run the installer again: bash <unzipped LifeCycle folder>/install.sh"
 }
 loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }

@@ -53,7 +53,7 @@ else on your Mac is changed, and you can run the same line again once it's fixed
 |---|---|---|---|
 | 1. Check this Mac | Checks your macOS version and chip | `✓ macOS … on Apple Silicon (M1 or newer)` | *needs macOS 13.5*: update macOS in System Settings → General → Software Update |
 | 2. Copy LifeCycle onto this Mac | Copies the files into `~/.lifecycle/app` | `✓ LifeCycle's files are in …` | Usually a full disk: free some space and run again |
-| 3. Get Node.js | Downloads Node.js from nodejs.org (about 50 MB) into a private folder, `~/.lifecycle/runtime`, and checks that it is the official file | `✓ Node.js v24… installed … (your PATH and any other Node.js are untouched)` | *Could not reach the Node.js download site*: check your internet; on a company VPN or network that blocks downloads, switch networks or ask IT to allow **nodejs.org** |
+| 3. Get Node.js | Downloads Node.js from nodejs.org (about 50 MB) into a private folder, `~/.lifecycle/runtime`, and checks that it is the official file (or uses yours: [Use your own Node.js instead](#use-your-own-nodejs-instead)) | `✓ Node.js v24… installed … (your PATH and any other Node.js are untouched)` | *Could not reach the Node.js download site*: check your internet; on a company VPN or network that blocks downloads, switch networks or ask IT to allow **nodejs.org** |
 | 4. Install LifeCycle's libraries | Downloads the two small libraries LifeCycle uses | `✓ Libraries installed` | *Could not download … from the npm registry*: same as above, for **registry.npmjs.org** |
 | 5. Connect to GitHub | Asks two questions (below) | `✓ Connected to GitHub as <you>` | See [Setup questions](#setup-questions). If GitHub can't be connected yet, the install still finishes (see *Almost done* below) |
 | 6. Start LifeCycle and open it | Sets LifeCycle to start when you log in, adds **LifeCycle** to your Applications, starts it and opens your browser | `✓ LifeCycle is running at http://lifecycle.localhost:4317` and the browser opens | *Another program is using port 4317*: restart the Mac and run the line again. Otherwise the message shows the last lines of the log |
@@ -240,8 +240,9 @@ LIFECYCLE_NODE=/opt/homebrew/bin/node ./install.sh   # or a specific one
   as that exact version's file: switching versions in your shell doesn't change LifeCycle, but
   **removing that version stops LifeCycle from starting**. Run the installer again to pick another.
 - To go back to the private copy: `LIFECYCLE_NODE=private ./install.sh`.
-- Older than 20, or no npm next to it: the installer stops at step 3 and says so, without
-  changing your install.
+- Older than 20, or no npm next to it: the installer stops at step 3 and says so, and LifeCycle
+  keeps the Node.js it used before. LifeCycle's private copy is removed only once an install with
+  your own Node.js has finished.
 
 ### Company npm registry or HTTPS proxy
 

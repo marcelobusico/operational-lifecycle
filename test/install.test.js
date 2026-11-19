@@ -153,6 +153,16 @@ test('LIFECYCLE_NODE=system uses the Node.js and npm on the PATH, downloads noth
   const back = await run('bash', ['install.sh'], { env: { ...env, LIFECYCLE_NODE: 'private' } });
   assert.match(back.stdout, /✓ Node\.js v[\d.]+ installed in .*runtime\/node/, back.all);
   assert.ok(!fs.existsSync(path.join(lc, 'node-path')));
+  // Switching to your own Node.js again, with the install failing later (registry blocked): the private
+  // copy stays, since the service may still run on it until an install finishes.
+  const fails = await run('bash', ['install.sh'], { env });
+  assert.match(fails.stderr, /Step 4 of 6/, fails.all);
+  assert.ok(fs.existsSync(path.join(lc, 'runtime', 'node', 'bin', 'node')), 'the private copy was removed before the install finished');
+  // Your Node.js removed later: the command says how to pick another, with the installer that is already there.
+  fs.writeFileSync(path.join(lc, 'node-path'), path.join(home, 'removed', 'bin', 'node') + '\n');
+  const gone = await run('bash', [path.join(lc, 'bin', 'lifecycle'), 'setup'], { env: { HOME: home, PATH: '/usr/bin:/bin', LIFECYCLE_HOME: lc } });
+  assert.equal(gone.status, 1);
+  assert.match(gone.stderr, /The Node\.js LifeCycle was set to use is gone[\s\S]*LIFECYCLE_NODE=system bash .*app\/install\.sh/, gone.all);
 });
 
 test('LIFECYCLE_NODE refuses a Node.js older than 20, and one that is missing', { skip: !mac, timeout: 60000 }, async () => {
