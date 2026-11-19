@@ -125,6 +125,51 @@ test('an older Node.js already on the PATH is never used or changed; LifeCycle g
   for (const rc of ['.zshrc', '.zprofile', '.bash_profile', '.profile']) assert.ok(!fs.existsSync(path.join(home, rc)), `${rc} was written`);
 });
 
+test('LIFECYCLE_NODE=system uses the Node.js and npm on the PATH, downloads nothing, and updates keep that choice', { skip: !mac, timeout: 180000 }, async () => {
+  const home = tmp('home');
+  const lc = path.join(home, '.lifecycle');
+  // A wrapper on the PATH, like a version manager's shim: the real node file is what gets saved.
+  const userBin = path.join(home, 'my-node', 'bin');
+  fs.mkdirSync(userBin, { recursive: true });
+  fs.writeFileSync(path.join(userBin, 'node'), `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, { mode: 0o755 });
+  const env = installEnv(home, { PATH: `${userBin}:/usr/bin:/bin:/usr/sbin:/sbin`, LIFECYCLE_NODE: 'system' });
+  dist.requests.length = 0;
+  const r = await run('bash', ['install.sh'], { env });
+  // Step 4 fails only because the registry is blocked in this test.
+  assert.match(r.stdout, /Step 3 of 6: Use your own Node\.js/, r.all);
+  assert.match(r.stdout, new RegExp(`✓ Using your Node\\.js ${process.version.replace(/\./g, '\\.')} at .* with its npm \\(nothing downloaded\\)`), r.all);
+  assert.match(r.stderr, /✗ Step 4 of 6 \(Install LifeCycle's libraries\)/);
+  assert.deepEqual(dist.requests, [], 'nodejs.org was contacted');
+  assert.ok(!fs.existsSync(path.join(lc, 'runtime')), 'a private Node.js was installed');
+  assert.equal(fs.readFileSync(path.join(lc, 'node-path'), 'utf8').trim(), process.execPath);
+  const status = await run('bash', [path.join(lc, 'bin', 'lifecycle'), 'status'], { env: { HOME: home, PATH: '/usr/bin:/bin', LIFECYCLE_HOME: lc, LIFECYCLE_PORT: '9' } });
+  assert.match(status.stdout, /Node\.js v[\d.]+ \(yours, at /, status.all);
+  // An update (no LIFECYCLE_NODE) keeps using it.
+  const again = await run('bash', ['install.sh'], { env: { ...env, LIFECYCLE_NODE: '' } });
+  assert.match(again.stdout, /✓ Using your Node\.js/, again.all);
+  assert.deepEqual(dist.requests, []);
+  // LIFECYCLE_NODE=private goes back to the private copy.
+  const back = await run('bash', ['install.sh'], { env: { ...env, LIFECYCLE_NODE: 'private' } });
+  assert.match(back.stdout, /✓ Node\.js v[\d.]+ installed in .*runtime\/node/, back.all);
+  assert.ok(!fs.existsSync(path.join(lc, 'node-path')));
+});
+
+test('LIFECYCLE_NODE refuses a Node.js older than 20, and one that is missing', { skip: !mac, timeout: 60000 }, async () => {
+  const home = tmp('home');
+  const userBin = path.join(home, 'old-node', 'bin');
+  fs.mkdirSync(userBin, { recursive: true });
+  fs.writeFileSync(path.join(userBin, 'node'), '#!/bin/sh\ncase "$1" in -v) echo v18.20.8 ;; *) echo /x/bin/node ;; esac\n', { mode: 0o755 });
+  const old = await run('bash', ['install.sh'], { env: installEnv(home, { PATH: `${userBin}:/usr/bin:/bin:/usr/sbin:/sbin`, LIFECYCLE_NODE: 'system' }) });
+  assert.equal(old.status, 1, old.all);
+  assert.match(old.stderr, /Step 3 of 6 \(Use your own Node\.js\)[\s\S]*is v18\.20\.8, and LifeCycle needs 20 or newer/);
+  assert.ok(!fs.existsSync(path.join(home, '.lifecycle', 'node-path')));
+  const gone = await run('bash', ['install.sh'], { env: installEnv(home, { LIFECYCLE_NODE: path.join(home, 'nope', 'node') }) });
+  assert.equal(gone.status, 1);
+  assert.match(gone.stderr, /There is no Node\.js at .*nope\/node/);
+  const none = await run('bash', ['install.sh'], { env: installEnv(home, { LIFECYCLE_NODE: 'system' }) });
+  assert.match(none.stderr, /there is no 'node' on your PATH/);
+});
+
 // A GitHub ZIP is `git archive` of main: .lifecycle-source comes filled in (export-subst).
 function archiveOfThisCode(work) {
   const repo = path.join(work, 'repo');

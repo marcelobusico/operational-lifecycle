@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startFakeGithub } from './fake-github.js';
 import { checkForUpdate } from '../src/update/check.js';
-import { createUpdater } from '../src/update/upgrade.js';
+import { createUpdater, installedNode } from '../src/update/upgrade.js';
 import { createServer, createUpdateService } from '../src/server.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -299,4 +299,13 @@ test('an upgrade request from another site, without an Origin, or through a non-
   } finally {
     await srv.close();
   }
+});
+
+test('the app updater uses the Node.js chosen at install (node-path), else the private copy', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-node-'));
+  assert.equal(installedNode(home), path.join(home, 'runtime', 'node', 'bin', 'node'));
+  fs.writeFileSync(path.join(home, 'node-path'), '/opt/homebrew/bin/node\n');
+  assert.equal(installedNode(home), '/opt/homebrew/bin/node');
+  fs.writeFileSync(path.join(home, 'node-path'), 'not/a/full/path\n');
+  assert.equal(installedNode(home), path.join(home, 'runtime', 'node', 'bin', 'node'));
 });

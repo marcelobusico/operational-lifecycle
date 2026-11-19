@@ -26,6 +26,16 @@ class StepError extends Error {
   constructor(step, message, fix) { super(message); this.step = step; this.fix = fix; }
 }
 
+// The Node.js LifeCycle was installed with: the person's own (path saved in <home>/node-path by
+// install.sh with LIFECYCLE_NODE), else the private copy in <home>/runtime.
+export function installedNode(home) {
+  try {
+    const saved = fs.readFileSync(path.join(home, 'node-path'), 'utf8').split('\n')[0].trim();
+    if (saved.startsWith('/')) return saved;
+  } catch { /* no saved choice: the private copy */ }
+  return path.join(home, 'runtime', 'node', 'bin', 'node');
+}
+
 function readJson(file) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
@@ -52,8 +62,10 @@ export function createUpdater({
   const lockFile = path.join(work, 'lock');
   const resultFile = path.join(work, 'result.json');
   const staging = path.join(work, 'staging');
-  const node = nodeBin || path.join(home, 'runtime', 'node', 'bin', 'node');
-  const npm = npmCli || path.join(path.dirname(path.dirname(node)), 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
+  const node = nodeBin || installedNode(home);
+  // npm sits next to the real node file (a Homebrew /opt/homebrew/bin/node is a link into its Cellar).
+  const realNode = () => { try { return fs.realpathSync(node); } catch { return node; } };
+  const npm = npmCli || path.join(path.dirname(path.dirname(realNode())), 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
   let current = null; // the upgrade running in this process: { from, to, step, started_at }
 
   function lockHeld() {
@@ -118,7 +130,7 @@ export function createUpdater({
     }
     writeRecord(staging, { commit: to, date });
 
-    // 3. libraries, with LifeCycle's private Node.js only (never another Node on this Mac).
+    // 3. libraries, with LifeCycle's Node.js only (the private copy, or the one chosen at install).
     current.step = 'libraries';
     const env = {
       HOME: process.env.HOME, PATH: `${path.dirname(node)}:/usr/bin:/bin:/usr/sbin:/sbin`,

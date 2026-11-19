@@ -220,7 +220,28 @@ You don't need to change anything. LifeCycle uses its **own private Node.js**, i
 - Uninstalling removes only LifeCycle's private copy.
 
 Engineers who prefer their own Node.js 20+ can still use the manual way in the
-[README](../README.md#install-for-developers) (`npm install`, `npm run setup`, `npm start`).
+[README](../README.md#install-for-developers) (`npm install`, `npm run setup`, `npm start`), or
+the installer with their own Node.js (next section).
+
+### Use your own Node.js instead
+
+If you already have Node.js 20 or newer, the installer can use it and its npm, and skip the
+download:
+
+```bash
+LIFECYCLE_NODE=system ./install.sh               # the node on your PATH
+LIFECYCLE_NODE=/opt/homebrew/bin/node ./install.sh   # or a specific one
+```
+
+- The choice is saved in `~/.lifecycle/node-path`; updates (the app's **Check for updates** and
+  `lifecycle update`) keep using it. `lifecycle status` shows which Node.js runs LifeCycle.
+- Homebrew's `/opt/homebrew/bin/node` (and `/usr/local/bin/node`) is saved as is, so
+  `brew upgrade node` moves LifeCycle along with it. A node from nvm, fnm, Volta or asdf is saved
+  as that exact version's file: switching versions in your shell doesn't change LifeCycle, but
+  **removing that version stops LifeCycle from starting**. Run the installer again to pick another.
+- To go back to the private copy: `LIFECYCLE_NODE=private ./install.sh`.
+- Older than 20, or no npm next to it: the installer stops at step 3 and says so, without
+  changing your install.
 
 ### What gets downloaded, and from where
 
@@ -244,6 +265,7 @@ published or hosted. Updates can only be started from LifeCycle's own page on yo
 |---|---|---|
 | `~/.lifecycle/app` | LifeCycle's code | Yes |
 | `~/.lifecycle/runtime` | Private Node.js | Yes |
+| `~/.lifecycle/node-path` | Which Node.js to use, only when installed with `LIFECYCLE_NODE` (no `runtime` then) | Yes |
 | `~/.lifecycle/bin/lifecycle` | The `lifecycle` command | Yes |
 | `~/Library/LaunchAgents/com.lifecycle.server.plist` | Starts LifeCycle when you log in | Yes |
 | `~/Applications/LifeCycle.app` | Opens LifeCycle in your browser | Yes |
