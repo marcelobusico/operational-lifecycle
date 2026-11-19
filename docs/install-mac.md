@@ -163,11 +163,11 @@ Your settings, GitHub access, history and logs in `~/.lifecycle` are kept. Use a
   Clicking it shows the result: **Up to date** (with the commit you run and its date), **N updates
   available** (with each change's title and a link to view the changes on GitHub), or why it
   couldn't check (offline, no access to the LifeCycle repo, GitHub not connected) and what to do.
-  **Update now…** asks you to confirm, then downloads the newest `main`, installs its libraries
+  **Update now** (one tap, no second confirm) downloads the newest `main`, installs its libraries
   with LifeCycle's private Node.js and restarts LifeCycle; the page reconnects on its own. If a step
   fails, the version you had stays in place and keeps running, and the message names the step. If
   the newest version's GitHub Actions checks failed or are still running, you are warned before
-  you confirm. A copy installed before this button existed shows **Installed version unknown**;
+  you tap **Update now**. A copy installed before this button existed shows **Installed version unknown**;
   updating once records the version from then on.
 - **In Terminal:** paste `~/.lifecycle/bin/lifecycle update`. It downloads the newest
   LifeCycle from GitHub with your saved access and re-runs the installer.

@@ -25,7 +25,7 @@ It follows your `~/.npmrc` (company registry, proxy), and `LIFECYCLE_CA_FILE=/pa
 trusts a proxy's own root certificate ([details](docs/install-mac.md#company-npm-registry-or-https-proxy)).
 To update, click **Check for updates** at the bottom left of the sidebar (above **Theme**): it
 compares your copy with the newest commit on `main` using your saved GitHub access, lists what's
-new, and updates and restarts LifeCycle after you confirm, keeping your settings. In Terminal,
+new, and updates and restarts LifeCycle with one tap on **Update now**, keeping your settings. In Terminal,
 `~/.lifecycle/bin/lifecycle update` does the same. Uninstall: `~/.lifecycle/bin/lifecycle uninstall`.
 A developer copy (a git working copy run with `npm start`) gets the check too, but never updates
 itself: it shows the command to pull the changes (`git pull origin main && npm install`).

@@ -1585,8 +1585,8 @@ a, a:hover, a:focus, a:focus-visible, a:visited, .linkbtn, .linkbtn:hover, .link
 .upd-h + .upd-ok { margin: 12px 0 0; } /* right under the title and close button */
 .upd-fix { color: var(--foreground); }
 .upd-cmd code { display: block; padding: 8px 12px; border-radius: 8px; background: var(--muted); user-select: all; overflow-x: auto; white-space: nowrap; }
-.upd-bul { padding-left: 20px; line-height: 1.6; }
 .upd-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.upd-actions .upd-note { flex: 1 1 100%; margin: 0; color: var(--muted-foreground); font-size: 12.5px; line-height: 1.5; }
 .upd-steps { list-style: none; padding: 0; margin: 14px 0; display: grid; gap: 8px; }
 .upd-steps li { display: flex; align-items: center; gap: 10px; color: var(--muted-foreground); }
 .upd-steps li.done { color: var(--success); }
