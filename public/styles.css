@@ -868,7 +868,8 @@ main a:not([class]):hover { color: var(--primary); }
 /* rail: logo mark + icons; labels stay for screen readers, names show as tooltips */
 .rail .shell { grid-template-columns: var(--sb-rail) minmax(0, 1fr); }
 /* Drag handle on the sidebar's right edge (from 900px up, expanded): widens it to show full names. */
-.sb-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 7px; cursor: col-resize; z-index: 2; touch-action: none; }
+/* Fixed to the window (not inside the sidebar, which scrolls), on the sidebar's right edge. */
+.sb-resize { position: fixed; top: 0; bottom: 0; left: calc(var(--sb-w) - 7px); width: 7px; cursor: col-resize; z-index: 31; touch-action: none; }
 .sb-resize::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 2px; background: transparent; transition: background .15s; }
 .sb-resize:hover::after, .sb-resize:focus-visible::after, html.sb-resizing .sb-resize::after { background: var(--brand-periwinkle); }
 .sb-resize:focus-visible { outline: none; }

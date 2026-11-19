@@ -3104,7 +3104,8 @@ const SB_W_KEY = 'lifecycle-sidebar-width';
 const SB_MIN = 248, SB_MAX = 560;
 const sbResize = $('#sb-resize');
 function setSidebarWidth(px, { save = true } = {}) {
-  const w = Math.round(Math.min(SB_MAX, Math.max(SB_MIN, px)));
+  // Never so wide that the page next to it gets narrower than 480px.
+  const w = Math.round(Math.min(SB_MAX, Math.max(SB_MIN, innerWidth - 480), Math.max(SB_MIN, px)));
   if (w === SB_MIN) root.style.removeProperty('--sb-w'); else root.style.setProperty('--sb-w', `${w}px`);
   sbResize.setAttribute('aria-valuenow', String(w));
   if (save) { try { if (w === SB_MIN) localStorage.removeItem(SB_W_KEY); else localStorage.setItem(SB_W_KEY, String(w)); } catch { /* private mode */ } }
