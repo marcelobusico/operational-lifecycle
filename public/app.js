@@ -109,10 +109,12 @@ function parseRoute() {
   const h = location.hash;
   let m;
   if ((m = h.match(/^#\/feature\/(.+)\/edit$/))) return { route: 'feature-edit', mode: 'update', id: decodeURIComponent(m[1]) };
-  if (h === '#/features/new') return { route: 'feature-edit', mode: 'create', id: null };
+  // #/features/new?project=<id>: the form starts with that project chosen (from a project's page).
+  if ((m = h.match(/^#\/features\/new(?:\?project=([^&]+))?$/))) return { route: 'feature-edit', mode: 'create', id: null, project: m[1] ? decodeURIComponent(m[1]) : '' };
   if ((m = h.match(/^#\/feature\/(.+)$/))) return { route: 'feature', id: decodeURIComponent(m[1]) };
   if ((m = h.match(/^#\/project\/([^/]+)(?:\/(map))?$/))) return { route: 'project', id: decodeURIComponent(m[1]), tab: m[2] || 'features' };
   if (h === '#/projects/new') return { route: 'project-new' };
+  if ((m = h.match(/^#\/project\/([^/]+)\/edit$/))) return { route: 'project-new', editId: decodeURIComponent(m[1]) };
   if (h === '#/roadmap') return { route: 'roadmap' };
   if (h === '#/map' || h.startsWith('#/map?')) return { route: 'map' };
   // The chat is a side panel now: an old Ask link opens it over Home.
@@ -148,7 +150,7 @@ document.addEventListener('click', (e) => {
 
 function renderChrome(r) {
   rememberProject(r);
-  const navRoute = r.route === 'project' || r.route === 'feature' ? 'roadmap' : r.route === 'feature-edit' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route;
+  const navRoute = r.route === 'project' || r.route === 'feature' || (r.route === 'project-new' && r.editId) ? 'roadmap' : r.route === 'feature-edit' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route;
   if (r.route === 'alerts') alertsAcknowledged = true;
   const unseenCount = alertView ? alertView.alerts.filter((a) => !isSeen(a)).length : 0;
   const nb = $('#alert-count');
@@ -175,7 +177,7 @@ function renderChrome(r) {
   const sideArch = sideAll.filter((p) => isArchived(p.project.id));
   $('#side-features').innerHTML = sideAll.filter((p) => !isArchived(p.project.id)).map(sideItem).join('')
     + (sideArch.length ? `<li class="side-arch"><details${sideArch.some((p) => pid(p.project.id) === active) ? ' open' : ''}><summary>Archived <span class="cnt">${sideArch.length}</span></summary><ul>${sideArch.map(sideItem).join('')}</ul></details></li>` : '')
-    + '<li class="side-new"><a href="#/projects/new" data-route="project-new"' + (r.route === 'project-new' ? ' aria-current="page"' : '') + '><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg><span class="t">New project</span></a></li>';
+    + '<li class="side-new"><a href="#/projects/new" data-route="project-new"' + (r.route === 'project-new' && !r.editId ? ' aria-current="page"' : '') + '><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg><span class="t">New project</span></a></li>';
 
   const sep = '<span aria-hidden="true">/</span>';
   const crumbProject = (id) => `<a href="${projHref(id)}">${esc(projectById(pid(id))?.project.name || 'No project')}</a>`;
@@ -186,8 +188,10 @@ function renderChrome(r) {
     crumbs = `<a href="#/roadmap">Roadmap</a>${sep}${p ? `${crumbProject(p.project.id)}${sep}` : ''}<span class="cur">${esc(f?.feature.name || r.id)}</span>`;
   } else if (r.route === 'feature-edit') {
     const f = snapshot?.features.find((x) => x.feature.id === r.id);
-    crumbs = r.mode === 'create' ? `<a href="#/roadmap">Roadmap</a>${sep}<span class="cur">New feature</span>`
+    crumbs = r.mode === 'create' ? `<a href="#/roadmap">Roadmap</a>${sep}${r.project ? `${crumbProject(r.project)}${sep}` : ''}<span class="cur">New feature</span>`
       : `<a href="#/roadmap">Roadmap</a>${sep}<a href="${href(r.id)}">${esc(f?.feature.name || r.id)}</a>${sep}<span class="cur">Edit</span>`;
+  } else if (r.route === 'project-new' && r.editId) {
+    crumbs = `<a href="#/roadmap">Roadmap</a>${sep}${crumbProject(r.editId)}${sep}<span class="cur">Edit</span>`;
   } else if (r.route === 'project') {
     crumbs = `<a href="#/roadmap">Roadmap</a>${sep}<span class="cur">${esc(projectById(r.id)?.project.name || r.id)}</span>`;
   } else {
@@ -311,9 +315,9 @@ function render() {
     teams: () => renderTeamsFlow(),
     team: () => renderTeam(r.id),
     'team-edit': () => renderTeamEdit(r.mode, r.id),
-    'project-new': () => renderProjectNew(),
+    'project-new': () => renderProjectNew(r.editId || null),
     change: () => renderChangeForm(r.mode, r.id || null),
-    'feature-edit': () => renderFeatureEdit(r.mode, r.id),
+    'feature-edit': () => renderFeatureEdit(r.mode, r.id, r.project),
     home: () => renderHome(),
   }[r.route]();
   if (r.route !== 'change') changeForm = null;
@@ -359,12 +363,12 @@ function renderProject(id, tab) {
   const outside = outsideList(p.depends_on_outside.filter((d) => d.project !== undefined), 'Depends on, in other projects')
     + outsideList(p.depended_on_from_outside, 'Depended on by, in other projects');
   const body = !fs.length
-    ? `<div class="card empty"><strong>No features in this project yet</strong>Add <code>project: ${esc(pid(p.project.id))}</code> to a feature in the shared repo.</div>`
+    ? `<div class="card empty"><strong>No features in this project yet</strong>${editAccess?.can_edit && p.project.id ? 'Add one with <b>New feature</b>, or choose this project when you edit a feature.' : `Add <code>project: ${esc(pid(p.project.id))}</code> to a feature in the shared repo.`}</div>`
     : tab === 'map'
       ? `${mapSvg(p.features, null, { external: true })}${legend(true)}`
       : `${featureList(fs)}${outside ? `<div class="section"><h2>Outside this project</h2><div class="cols2">${outside}</div></div>` : ''}`;
   return `<p class="kicker">Project</p>
-    <div class="fhead"><h1>${esc(p.project.name)}</h1>${badge(p.state)}${archiveButton(p, { suggest: allDone(p) })}</div>
+    <div class="fhead"><h1>${esc(p.project.name)}</h1>${badge(p.state)}${archiveButton(p, { suggest: allDone(p) })}${editAccess?.can_edit && p.project.id ? `<a class="btn small" href="#/project/${encodeURIComponent(p.project.id)}/edit">Edit project</a><button type="button" class="btn small danger" data-project-delete="${esc(p.project.id)}">Delete project</button>${newFeatureButton(p.project.id)}` : ''}</div>
     ${isArchived(p.project.id) ? '<p class="arch-note">Archived for you: it no longer shows in your Roadmap or Home. Everything here is still live, and you can ask about it in Ask.</p>' : ''}
     ${p.project.description ? `<p class="lede">${esc(p.project.description)}</p>` : ''}
     <div class="facts">
@@ -425,11 +429,19 @@ function featureList(fs, { showProject = false } = {}) {
 
 // ---------- new project: commits projects/<id>.yaml under the person's GitHub user ----------
 
-let projectForm = null; // { draft: { name, id, owner, description }, idTouched, errors, result, busy }
+let projectForm = null; // { editId, draft: { name, id, owner, description }, base, idTouched, errors, result, busy }
 
-function renderProjectNew() {
-  if (!projectForm) projectForm = { draft: { name: '', id: '', owner: '', description: '' }, idTouched: false, errors: [], result: null, busy: false };
+// editId: edit that project (name, owner, description; the id stays) instead of creating one.
+function renderProjectNew(editId = null) {
+  if (projectForm && projectForm.editId !== editId) projectForm = null;
+  if (!projectForm) {
+    const p = editId ? projectById(editId) : null;
+    if (editId && !p) return `<p class="kicker">Project</p><h1 class="mono">${esc(editId)}</h1><div class="card empty section"><strong>Not defined</strong>No project with this id exists in the shared repo.</div>`;
+    const draft = p ? { name: p.project.name || '', id: p.project.id, owner: p.project.owner || '', description: p.project.description || '' } : { name: '', id: '', owner: '', description: '' };
+    projectForm = { editId, draft, base: p ? { ...draft } : null, idTouched: Boolean(p), errors: [], result: null, busy: false };
+  }
   const f = projectForm, d = f.draft;
+  if (editId) return renderProjectEdit(f, d);
   const target = snapshot.definitions.source.startsWith('local:') ? 'the local data folder' : `the shared repo (${esc(snapshot.definitions.source.replace(/^github:/, '').replace(/@.*$/, ''))})`;
   const err = (field) => (f.errors || []).filter((e) => e.field === field).map((e) => `<p class="ferr" role="alert">${esc(e.message)}</p>`).join('');
   const bad = (field) => ((f.errors || []).some((e) => e.field === field) ? ' aria-invalid="true"' : '');
@@ -438,7 +450,7 @@ function renderProjectNew() {
       <div class="banner st-unavailable section" role="status"><span class="ico">!</span><div><b>You can't create projects.</b> ${esc(editAccess.reason || '')}</div></div>`;
   }
   return `<p class="kicker">Projects</p><h1>New project</h1>
-    <p class="lede">Creating it ${snapshot.definitions.source.startsWith('local:') ? 'saves' : 'commits'} <code>projects/${esc(d.id || '<id>')}.yaml</code> to ${target}${snapshot.definitions.source.startsWith('local:') ? '' : ' as your GitHub user'}. Add features to it with <b>New feature</b> on the Roadmap.</p>
+    <p class="lede">Creating it ${snapshot.definitions.source.startsWith('local:') ? 'saves' : 'commits'} <code>projects/${esc(d.id || '<id>')}.yaml</code> to ${target}${snapshot.definitions.source.startsWith('local:') ? '' : ' as your GitHub user'}. Add features to it with <b>New feature</b> on its page.</p>
     ${f.result ? `<div class="banner st-blocked section" role="alert"><span class="ico">!</span><div>${esc(f.result.message || '')}</div></div>` : ''}
     <form id="projectform" class="cform section" novalidate><div class="card fbox">
       <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}" placeholder="Redeem rewards" autocomplete="off"${bad('name')}></label>${err('name')}
@@ -449,10 +461,31 @@ function renderProjectNew() {
     </div></form>`;
 }
 
+function renderProjectEdit(f, d) {
+  const err = (field) => (f.errors || []).filter((e) => e.field === field).map((e) => `<p class="ferr" role="alert">${esc(e.message)}</p>`).join('');
+  const bad = (field) => ((f.errors || []).some((e) => e.field === field) ? ' aria-invalid="true"' : '');
+  const local = snapshot.definitions.source.startsWith('local:');
+  const back = projHref(f.editId);
+  if (editAccess && !editAccess.can_edit) {
+    return `<p class="kicker">Edit project</p><h1>${esc(f.base.name)}</h1>
+      <div class="banner st-unavailable section" role="status"><span class="ico">!</span><div><b>You can't edit projects.</b> ${esc(editAccess.reason || '')}</div></div>`;
+  }
+  return `<p class="kicker">Edit project</p><h1>${esc(f.base.name)}</h1>
+    <p class="lede">Saving ${local ? 'saves' : 'commits'} <code>${esc(projectById(f.editId)?.project.file || `projects/${f.editId}.yaml`)}</code>${local ? '' : ' as your GitHub user'}. The id (<code>${esc(f.editId)}</code>) stays the same, so its features stay in it.</p>
+    ${f.result ? `<div class="banner st-blocked section" role="alert"><span class="ico">!</span><div>${esc(f.result.message || '')}</div></div>` : ''}
+    <form id="projectform" class="cform section" novalidate><div class="card fbox">
+      <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}" autocomplete="off"${bad('name')}></label>${err('name')}
+      <label>Owner <span class="muted small">optional</span><input name="owner" value="${esc(d.owner)}" placeholder="Catalog team or @handle"${bad('owner')}></label>${err('owner')}
+      <label>Description <span class="muted small">optional</span><textarea name="description" rows="2"${bad('description')}>${esc(d.description)}</textarea></label>${err('description')}
+      <div class="factions"><button class="btn primary" type="submit"${f.busy ? ' disabled' : ''}>${f.busy ? 'Saving…' : 'Save'}</button><a class="btn" href="${back}">Cancel</a></div>
+    </div></form>`;
+}
+
 function wireProjectNew(root) {
   const form = root.querySelector('#projectform');
   if (!form) return;
   const f = projectForm;
+  if (f.editId) return wireProjectEdit(form, f);
   const sync = () => {
     const v = (n) => form.querySelector(`[name="${n}"]`).value;
     f.draft = { name: v('name'), id: v('id'), owner: v('owner'), description: v('description') };
@@ -474,6 +507,30 @@ function wireProjectNew(root) {
       await load();
       toast(r.message);
       location.hash = projHref(r.id);
+      return;
+    }
+    f.errors = r.errors || [];
+    f.result = r;
+    render();
+    $('#main [aria-invalid="true"]')?.focus();
+  });
+}
+
+function wireProjectEdit(form, f) {
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = (n) => form.querySelector(`[name="${n}"]`).value;
+    f.draft = { ...f.draft, name: v('name'), owner: v('owner'), description: v('description') };
+    f.busy = true; f.errors = []; f.result = null;
+    render();
+    const r = await sendFeature(`/api/projects/${encodeURIComponent(f.editId)}`, 'PUT', { draft: f.draft, base: f.base });
+    f.busy = false;
+    if (r.outcome === 'published' || r.outcome === 'unchanged') {
+      const id = f.editId;
+      projectForm = null;
+      if (r.outcome === 'published') await load();
+      toast(r.message);
+      location.hash = projHref(id);
       return;
     }
     f.errors = r.errors || [];
@@ -1667,15 +1724,15 @@ let featureEdit = null; // the open form: { mode, id, def, draft, base, errors, 
 async function loadEditAccess() {
   try { editAccess = await (await fetch('/api/features-edit-access', { cache: 'no-store' })).json(); } catch { editAccess = null; }
   const r = parseRoute();
-  if (['feature', 'roadmap', 'project-new'].includes(r.route)) render();
+  if (['feature', 'roadmap', 'project', 'project-new'].includes(r.route)) render();
 }
 
-const emptyDraft = () => ({ id: '', name: '', owner: '', description: '', target_date: '', depends_on: [], services: [], flags: [], steps: [] });
+const emptyDraft = (project = '') => ({ id: '', name: '', owner: '', description: '', project, target_date: '', depends_on: [], services: [], flags: [], steps: [] });
 const slugify = (t) => String(t || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
 
-function openFeatureEdit(mode, id) {
-  if (featureEdit && featureEdit.mode === mode && featureEdit.id === id) return;
-  featureEdit = { mode, id, def: null, draft: mode === 'create' ? emptyDraft() : null, base: null, errors: [], preview: null, result: null, busy: false, loading: true };
+function openFeatureEdit(mode, id, project = '') {
+  if (featureEdit && featureEdit.mode === mode && featureEdit.id === id && (mode !== 'create' || featureEdit.project === project)) return;
+  featureEdit = { mode, id, project, def: null, draft: mode === 'create' ? emptyDraft(project) : null, base: null, errors: [], preview: null, result: null, busy: false, loading: true };
   const f = featureEdit;
   const url = mode === 'create' ? '/api/features-edit-access' : `/api/features/${encodeURIComponent(id)}/definition`;
   fetch(url, { cache: 'no-store' }).then(async (res) => {
@@ -1761,10 +1818,10 @@ function stepRow(s, i, n) {
     ${jiraMessages(at, s.add_jira)}</li>`;
 }
 
-function renderFeatureEdit(mode, id) {
-  openFeatureEdit(mode, id);
+function renderFeatureEdit(mode, id, project = '') {
+  openFeatureEdit(mode, id, project);
   const f = featureEdit;
-  const back = mode === 'create' ? '#/roadmap' : href(id);
+  const back = mode === 'create' ? (project ? projHref(project) : '#/roadmap') : href(id);
   if (f.loading) return '<div class="card empty"><strong>Loading the definition…</strong></div>';
   if (f.missing) return `<div class="card empty"><strong>This feature can't be edited here</strong>${esc(f.missing)} <a href="${back}">Back</a></div>`;
   const access = f.def.access;
@@ -1800,6 +1857,12 @@ function renderFeatureEdit(mode, id) {
           <div class="row3"><label>Owner <span class="req">required</span><input name="owner" value="${esc(d.owner)}" placeholder="Mobile team or @handle"${editInvalid('owner')}></label>
             <label>Target date <span class="muted small">optional</span><input type="date" name="target_date" value="${esc(d.target_date)}"${editInvalid('target_date')}></label></div>
           ${editMessages('owner')}${editMessages('target_date')}
+          <label>Project <span class="muted small">optional</span><select name="project"${editInvalid('project')}>
+            <option value=""${d.project ? '' : ' selected'}>No project</option>
+            ${[...snapshot.projects].filter((p) => p.project.id).sort((a, b) => a.project.name.localeCompare(b.project.name))
+              .map((p) => `<option value="${esc(p.project.id)}"${d.project === p.project.id ? ' selected' : ''}>${esc(p.project.name)}</option>`).join('')}
+            ${d.project && !snapshot.projects.some((p) => p.project.id === d.project) ? `<option value="${esc(d.project)}" selected>${esc(d.project)} (not a defined project)</option>` : ''}
+          </select></label>${editMessages('project')}
           <label>Description <span class="muted small">optional</span><textarea name="description" rows="2"${editInvalid('description')}>${esc(d.description)}</textarea></label>${editMessages('description')}
           <fieldset class="fld"><legend>Depends on <span class="muted small">features that must be done first</span></legend>
             <ul class="fpick"${editInvalid('depends_on')}>${others.map((x) => `<li><label><input type="checkbox" name="depends_on" value="${esc(x.feature.id)}"${d.depends_on.includes(x.feature.id) ? ' checked' : ''}>
@@ -1840,7 +1903,7 @@ function readFeatureForm(form) {
   });
   return {
     id: featureEdit.mode === 'create' ? String(fd.get('id') || '').trim() : featureEdit.id,
-    name: fd.get('name') || '', owner: fd.get('owner') || '', description: fd.get('description') || '', target_date: fd.get('target_date') || '',
+    name: fd.get('name') || '', owner: fd.get('owner') || '', description: fd.get('description') || '', project: fd.get('project') || '', target_date: fd.get('target_date') || '',
     depends_on: fd.getAll('depends_on'), services: list(fd.get('services')), flags: list(fd.get('flags')), steps,
   };
 }
@@ -1848,7 +1911,7 @@ function readFeatureForm(form) {
 // After a conflict: the fields this person changed, applied to the latest version of the feature.
 function rebaseDraft(mine, original, latest) {
   const out = structuredClone(latest);
-  for (const k of ['name', 'owner', 'description', 'target_date', 'depends_on', 'services', 'flags', 'steps']) {
+  for (const k of ['name', 'owner', 'description', 'project', 'target_date', 'depends_on', 'services', 'flags', 'steps']) {
     if (JSON.stringify(mine[k]) !== JSON.stringify(original[k])) out[k] = structuredClone(mine[k]);
   }
   return out;
@@ -1991,7 +2054,8 @@ function featureEditBar(f) {
   const ro = editAccess && !editAccess.can_edit ? `<p class="f-ro muted small" role="note"><b>Read-only.</b> ${esc(editAccess.reason)}</p>` : '';
   return bar + ro;
 }
-const newFeatureButton = () => (editAccess?.can_edit ? '<a class="btn primary" href="#/features/new">New feature</a>'
+// projectId: open the form with that project chosen (on a project's page).
+const newFeatureButton = (projectId = null) => (editAccess?.can_edit ? `<a class="btn primary" href="#/features/new${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}">New feature</a>`
   : editAccess ? `<p class="muted small f-ro" role="note"><b>Read-only.</b> ${esc(editAccess.reason)}</p>` : '');
 const editButton = (f) => (editAccess?.can_edit ? `<a class="btn small" href="${href(f.feature.id)}/edit">Edit feature</a>` : '');
 
@@ -3099,6 +3163,32 @@ document.addEventListener('click', (e) => {
   e.stopPropagation();
   setArchived(b.dataset.archive, b.dataset.on === '1');
 }, true);
+
+// Delete project: removes projects/<id>.yaml for everyone. A project with features can't be deleted
+// (the server checks again); the person is told which ones to move first.
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-project-delete]');
+  if (!b) return;
+  e.preventDefault();
+  const p = projectById(b.dataset.projectDelete);
+  if (!p) return;
+  const names = p.features.map((id) => snapshot.features.find((f) => f.feature.id === id)?.feature.name || id);
+  if (names.length) {
+    alert(`${p.project.name} still has ${names.length === 1 ? '1 feature' : `${names.length} features`}:\n\n${names.map((n) => `• ${n}`).join('\n')}\n\nMove ${names.length === 1 ? 'it' : 'them'} to another project or "No project" (Edit feature), or delete ${names.length === 1 ? 'it' : 'them'}, then delete the project.`);
+    return;
+  }
+  if (!confirm(`Delete ${p.project.name}? ${p.project.file || 'Its file'} is removed from the shared repo for everyone.`)) return;
+  b.disabled = true;
+  const r = await sendFeature(`/api/projects/${encodeURIComponent(p.project.id)}/delete`, 'POST', {});
+  if (r.outcome === 'published') {
+    await load();
+    toast(r.message);
+    location.hash = '#/roadmap';
+    return;
+  }
+  b.disabled = false;
+  alert(r.message || 'The project was not deleted.');
+});
 
 // When a feature has no linked work, its bar starts on the day this LifeCycle first showed it
 // (remembered in this browser), so the filled part grows as time passes toward the due date.
