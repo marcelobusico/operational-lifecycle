@@ -58,7 +58,7 @@ before(async () => {
   const config = { ...w.config, alerts: { source: alertsFile }, atRiskDays: 14 };
   // The person's local config: provider and identity. Tests change it the way a person would.
   localConfig = { ai: { ...DEFAULTS.ai, provider: 'claude', apiUrl: claude.url }, me: { owners: ['@dev'] }, atRiskDays: 14 };
-  app = createApp({ config, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
+  app = createApp({ alwaysLive: true, config, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
   ask = createAskService({ app, readConfig: () => localConfig });
   const server = createServer(app, ask);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -154,7 +154,7 @@ test('an undefined feature: "I don\'t have a feature called …", the defined fe
   assert.equal(a.outcome, 'unknown_feature');
   assert.equal(a.lead.text, 'I don\'t have a feature called "reader v2".');
   assert.ok(a.defined_features.some((f) => f.id === 'redeem-rewards'));
-  assert.equal(a.defined_features.length, app.config && (await app.refresh()).features.length);
+  assert.equal(a.defined_features.length, app.config && (await app.refresh({ live: true })).features.length);
   assert.deepEqual(a.sections, []);
   assert.equal(a.feature, null);
 });

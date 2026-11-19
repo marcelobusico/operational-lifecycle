@@ -15,7 +15,7 @@ import { createServer } from '../src/server.js';
 let w, home, lc;
 
 function startLifecycle(opts = {}) {
-  const app = createApp({ config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey, storeCredentials: w.storeCredentials, ...opts });
+  const app = createApp({ alwaysLive: true, config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey, storeCredentials: w.storeCredentials, ...opts });
   const server = createServer(app);
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
     url: `http://127.0.0.1:${server.address().port}`,
@@ -225,7 +225,7 @@ test('after setup, LifeCycle-Data, the local logs and the page output hold no st
   // LifeCycle reading with the saved credentials (none passed in), the way the app starts.
   const saved = process.env.LIFECYCLE_HOME;
   process.env.LIFECYCLE_HOME = lcHome;
-  const app = createApp({ config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
+  const app = createApp({ alwaysLive: true, config: { ...w.config, ai: { provider: 'none' } }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
   const server = createServer(app);
   await new Promise((res) => server.listen(0, '127.0.0.1', res));
   const base = `http://127.0.0.1:${server.address().port}`;

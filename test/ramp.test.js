@@ -35,7 +35,7 @@ before(async () => {
   // An alert list with nothing open against it (so the alerts check really runs).
   const alertsFile = path.join(home, 'alerts.json');
   fs.writeFileSync(alertsFile, JSON.stringify({ schema: 'lifecycle.alerts/v1', alerts: [] }));
-  app = createApp({ config: { ...w.config, alerts: { source: alertsFile } }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
+  app = createApp({ alwaysLive: true, config: { ...w.config, alerts: { source: alertsFile } }, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
   ask = createAskService({ app, readConfig: () => ({ ai: { ...DEFAULTS.ai, provider: 'none' } }) });
   const server = createServer(app, ask);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));

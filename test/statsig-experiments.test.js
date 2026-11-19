@@ -18,7 +18,7 @@ const EXP = 'redeem_rewards_test';
 let w, lc;
 
 function start(statsigApiKey) {
-  const app = createApp({ config: w.configFor('statsig'), token: w.gh.token, statsigApiKey });
+  const app = createApp({ alwaysLive: true, config: w.configFor('statsig'), token: w.gh.token, statsigApiKey });
   const ask = createAskService({ app, readConfig: () => ({ ai: { ...DEFAULTS.ai, provider: 'none' }, me: { owners: [] } }) });
   const server = createServer(app, ask);
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({

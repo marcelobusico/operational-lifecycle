@@ -127,10 +127,18 @@ function normalizeAlerts(body) {
 }
 
 // Returns { alerts, meta: { source, configured, stale, read_at, last_successful_read_at, error } }.
-export async function readAlerts(config, { fetchImpl = fetch } = {}) {
+// live: false uses the last list read (when there is one) instead of reading it again.
+export async function readAlerts(config, { fetchImpl = fetch, live = true } = {}) {
   const source = config.alerts?.source || null;
   if (!source) {
     return { alerts: [], meta: { source: null, configured: false, stale: false, read_at: null, last_successful_read_at: null, error: null } };
+  }
+  if (!live) {
+    let saved = null;
+    try { saved = JSON.parse(fs.readFileSync(alertsCache(), 'utf8')); } catch { /* never read: read it now */ }
+    if (saved?.source === source) {
+      return { alerts: saved.alerts || [], meta: { source, configured: true, stale: false, read_at: saved.read_at, last_successful_read_at: saved.read_at, error: null } };
+    }
   }
   const readAt = new Date().toISOString();
   try {

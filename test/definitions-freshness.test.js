@@ -28,7 +28,7 @@ function config(overrides = {}) {
     sources: { github: { enabled: true, apiUrl: gh.url }, flagsmith: { ...DEFAULTS.sources.flagsmith, enabled: false }, statsig: { ...DEFAULTS.sources.statsig, enabled: false } },
     ...overrides };
 }
-const newApp = (overrides) => createApp({ config: config(overrides), token: gh.token, flagsmithApiKey: null, statsigApiKey: null });
+const newApp = (overrides) => createApp({ alwaysLive: true, config: config(overrides), token: gh.token, flagsmithApiKey: null, statsigApiKey: null });
 
 async function startServer(app) {
   const server = createServer(app, createAskService({ app, readConfig: () => app.config }));
@@ -94,7 +94,7 @@ test('the branch moving between listing the files and reading them never mixes t
     gh.state.head(DATA);
   };
   try {
-    const snap = await app.refresh();
+    const snap = await app.refresh({ live: true });
     const atCommit = gh.state.snapshots.get(snap.definitions.commit);
     assert.ok(atCommit, 'the reported commit is a real commit of the branch');
     const files = (await app.definitionsNow()).files;
@@ -103,7 +103,7 @@ test('the branch moving between listing the files and reading them never mixes t
     assert.equal(nameOf(snap, 'rewards'), 'Rewards points');
     assert.equal(nameOf(snap, 'wishlist'), 'Wishlist');
     // The next refresh picks up the push as a whole.
-    const next = await app.refresh();
+    const next = await app.refresh({ live: true });
     assert.equal(nameOf(next, 'rewards'), 'Rewards moved');
     assert.equal(nameOf(next, 'wishlist'), 'Wishlist moved');
     assert.equal(next.definitions.commit, gh.state.head(DATA));
@@ -121,12 +121,12 @@ test('a refresh clicked while another is running returns a read that started aft
   let once = false;
   gh.state.afterTree = async () => { if (once) return; once = true; reached(); await paused; };
   try {
-    const running = app.refresh(); // started before the push; holds at the file list
+    const running = app.refresh({ live: true }); // started before the push; holds at the file list
     await atTree;
     setFile('features/rewards.yaml', feature('rewards', 'Rewards after push'));
     const pushed = gh.state.head(DATA);
-    const clicked = app.refresh(); // the person presses refresh after the push
-    const alsoClicked = app.refresh(); // and again: shares the same next read
+    const clicked = app.refresh({ live: true }); // the person presses refresh after the push
+    const alsoClicked = app.refresh({ live: true }); // and again: shares the same next read
     assert.notEqual(clicked, running);
     assert.equal(alsoClicked, clicked);
     release();

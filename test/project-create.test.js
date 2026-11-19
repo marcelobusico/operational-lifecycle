@@ -22,7 +22,7 @@ before(async () => {
   w.gh.state.readOnlyLogins.add('cy');
   w.gh.state.files.get(DATA).set('projects/catalog.yaml', 'id: catalog\nname: Catalog\n');
   const config = { ...w.config, ai: { ...DEFAULTS.ai, provider: 'none' } };
-  const app = createApp({ config, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
+  const app = createApp({ alwaysLive: true, config, token: w.gh.token, flagsmithApiKey: w.fs.apiKey });
   server = createServer(app, createAskService({ app, readConfig: () => config }));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   url = `http://127.0.0.1:${server.address().port}`;

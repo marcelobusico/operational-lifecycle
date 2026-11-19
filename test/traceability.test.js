@@ -57,7 +57,7 @@ before(async () => {
 });
 after(async () => { await gh.close(); await fsm.close(); await st.close(); });
 
-const appWith = (over = {}) => createApp({ config: { ...config, ...over, sources: { ...config.sources, ...(over.sources || {}) } }, token: gh.token, flagsmithApiKey: fsm.apiKey, statsigApiKey: st.apiKey });
+const appWith = (over = {}) => createApp({ alwaysLive: true, config: { ...config, ...over, sources: { ...config.sources, ...(over.sources || {}) } }, token: gh.token, flagsmithApiKey: fsm.apiKey, statsigApiKey: st.apiKey });
 
 // A link to one specific item: a PR, issue, Actions run, commit, deploy record, flag, definition
 // file or LifeCycle feature view. Never a repo or tool home page or a list of items.
@@ -74,7 +74,7 @@ function specific(url) {
 }
 
 test('sample data: every status has a specific source link or an explicit "no source item" note, and a read time', async () => {
-  const snap = await appWith().refresh();
+  const snap = await appWith().refresh({ live: true });
   // Every sample feature.
   const active = fs.readdirSync(path.join(SAMPLE, 'features'));
   assert.equal(snap.features.length, active.length);
@@ -112,9 +112,9 @@ test('sample data: every status has a specific source link or an explicit "no so
 });
 
 test('GitHub unreachable: step statuses say "source unavailable since <time>" and keep their last known links', async () => {
-  const good = await appWith().refresh();
+  const good = await appWith().refresh({ live: true });
   const before = Object.fromEntries(good.features.map((f) => [f.feature.id, f]));
-  const down = await appWith({ sources: { github: { enabled: false, apiUrl: gh.url } } }).refresh();
+  const down = await appWith({ sources: { github: { enabled: false, apiUrl: gh.url } } }).refresh({ live: true });
   for (const f of down.features) {
     for (const t of f.sources.filter((x) => x.kind === 'developed' || x.kind === 'deployed')) {
       const where = `${f.feature.id} ${t.key}`;
@@ -156,7 +156,7 @@ test('a shared feature link opens the same feature view on another teammate\'s L
 
 test('the experiment: the same Statsig link and read time in the browser view and in the AI-tool answer, kept when Statsig is down', async () => {
   const app = appWith();
-  const snap = await app.refresh();
+  const snap = await app.refresh({ live: true });
   const src = snap.features.find((f) => f.feature.id === 'redeem-rewards').sources.find((t) => t.key === 'experiment:redeem_rewards_groups:production');
   const link = `https://console.statsig.com/${st.company}/experiments/redeem_rewards_groups`;
   assert.deepEqual(src.links.map((l) => l.url), [link]);
@@ -166,7 +166,7 @@ test('the experiment: the same Statsig link and read time in the browser view an
   assert.match(md, /Experiment redeem_rewards_groups is running in production .*Control \(control\) 50%: No rewards option/);
   st.state.down = true;
   try {
-    const down = (await app.refresh()).features.find((f) => f.feature.id === 'redeem-rewards').sources.find((t) => t.key === src.key);
+    const down = (await app.refresh({ live: true })).features.find((f) => f.feature.id === 'redeem-rewards').sources.find((t) => t.key === src.key);
     assert.ok(down.unavailable && down.unavailable_since, 'source unavailable since <time>');
     assert.ok(down.read_at >= src.read_at && down.read_at <= down.unavailable_since, 'last successful read, before it went down');
     assert.deepEqual(down.links.map((l) => l.url), [link], 'keeps the last known experiment link');

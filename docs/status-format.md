@@ -289,6 +289,20 @@ So a teammate without a flag platform key still sees flag status, LifeCycle shar
 - **Sources and ramp:** the flag's source entry has `from_snapshot: true`, and the ramp flag check
   says "team snapshot, read <time>".
 
+### When the sources are read (`sources_read`)
+
+Nothing is read on a timer. Every snapshot has `sources_read: { read_at, live }`:
+
+- **Refresh** (`GET /api/roadmap`, and every other read of the snapshot) reads the shared repo
+  only. Step evidence, the last mile, flag source health and the alert list are what the last live
+  read said (`live: false`, `read_at` = that read). A Jira team snapshot newer than this machine's
+  last read is used. An item added since then shows `unavailable` with "Not read on this machine
+  yet. Press Refresh data to read it." No team snapshots are written.
+- **Refresh data** (`POST /api/refresh-data`) reads every source live (`live: true`) and saves what
+  they said in `~/.lifecycle/cache/` for the plain refreshes after it. Jira and Slack still keep
+  their own `intervalMinutes`, so Claude isn't asked again within it.
+- The first refresh on a machine (nothing saved yet) reads live. `lifecycle status` always does.
+
 ### Experiments (Statsig)
 
 - **Where they are named:** `experiments:` in the feature definition, each an experiment id with

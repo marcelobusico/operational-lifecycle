@@ -26,7 +26,7 @@ async function person(name, { login }) {
     ai: { ...DEFAULTS.ai, provider: 'openai-compatible', apiUrl: ai.url, model: 'fake-model', timeoutMs: 5000 },
     sources: { github: { enabled: true, apiUrl: gh.url }, flagsmith: { ...DEFAULTS.sources.flagsmith, enabled: false } } };
   process.env.LIFECYCLE_HOME = home;
-  const app = createApp({ config, token: gh.token, flagsmithApiKey: null });
+  const app = createApp({ alwaysLive: true, config, token: gh.token, flagsmithApiKey: null });
   const service = createAskService({ app, readConfig: () => config });
   const server = createServer(app, service);
   const mcp = createMcpHandler({ app, ask: service });

@@ -14,7 +14,7 @@ let w, home;
 const files = () => w.gh.state.files.get(DATA);
 const snapFiles = () => [...files().keys()].filter((p) => p.startsWith('flag-snapshots/')).sort();
 const snapCommits = (from = 0) => w.gh.state.commits.slice(from).filter((c) => c.path.startsWith('flag-snapshots/'));
-const refresh = (statsigApiKey) => createApp({ config: w.configFor('statsig'), token: w.gh.token, flagsmithApiKey: w.fs.apiKey, statsigApiKey }).refresh();
+const refresh = (statsigApiKey) => createApp({ alwaysLive: true, config: w.configFor('statsig'), token: w.gh.token, flagsmithApiKey: w.fs.apiKey, statsigApiKey }).refresh({ live: true });
 const feature = (snap, id) => snap.features.find((f) => f.feature.id === id).last_mile;
 
 before(async () => {

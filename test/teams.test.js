@@ -22,7 +22,7 @@ async function person(name, { login }) {
   const config = { ...DEFAULTS, dataRepo: DATA, me: { owners: [], github: null }, ai: { ...DEFAULTS.ai, provider: 'none' },
     sources: { github: { enabled: true, apiUrl: gh.url }, flagsmith: { ...DEFAULTS.sources.flagsmith, enabled: false } } };
   process.env.LIFECYCLE_HOME = home;
-  const app = createApp({ config, token: gh.token, flagsmithApiKey: null });
+  const app = createApp({ alwaysLive: true, config, token: gh.token, flagsmithApiKey: null });
   const server = createServer(app, createAskService({ app, readConfig: () => config }));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}`;

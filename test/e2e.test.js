@@ -22,7 +22,7 @@ const feature = (id, { deps = [], steps = [] } = {}) => [
 
 function startLifecycle(overrides = {}) {
   const config = { ...DEFAULTS, dataRepo: DATA, sources: { github: { enabled: true, apiUrl: gh.url } }, ...overrides };
-  const server = createServer(createApp({ config, token: gh.token }));
+  const server = createServer(createApp({ alwaysLive: true, config, token: gh.token }));
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
     url: `http://127.0.0.1:${server.address().port}`,
     close: () => new Promise((r) => { server.close(r); server.closeAllConnections(); }),

@@ -6,7 +6,7 @@ copy of LifeCycle, with their own credentials and their own AI provider.
 
 ## What answers are built from
 
-Only these, read live in the same refresh as the map and the last mile (done vs. turned on):
+Only these, from the same refresh as the map and the last mile (done vs. turned on); the sources are as of the last **Refresh data**:
 
 | Input                     | Where it comes from                                                         |
 |---------------------------|-----------------------------------------------------------------------------|
