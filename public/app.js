@@ -1982,7 +1982,9 @@ function renderFeatureEdit(mode, id, project = '') {
   const pending = mode === 'update' ? (f.def.pending || []) : [];
   const services = snapshot.services || [];
   const fresh = f.preview && f.previewKey === JSON.stringify(f.draft);
-  const canPublish = fresh && f.preview.valid && !f.preview.stale && !f.preview.review?.blocking && (mode === 'create' || f.preview.diff.length);
+  // A pasted link that isn't a PR or issue is never sent (the server can't flag it), so it blocks here.
+  const badLinks = d.steps.some((s) => ghLinks(s.add_github).bad.length);
+  const canPublish = fresh && f.preview.valid && !f.preview.stale && !f.preview.review?.blocking && !badLinks && (mode === 'create' || f.preview.diff.length);
   return `<p class="kicker">${mode === 'create' ? `Add a ${kind}` : `Edit ${kind}`}</p><h1>${title}</h1>
     <p class="lede">${`Publishing commits this definition straight to ${target} as your GitHub user. Every teammate's LifeCycle shows it on their next refresh. Status isn't edited here: it always comes from the live reads.`}</p>
     ${mode === 'create' ? termsHelp({ open: true }) : ''}
@@ -2022,7 +2024,7 @@ function renderFeatureEdit(mode, id, project = '') {
             <button class="btn primary" type="button" data-edit-publish${canPublish && !f.busy ? '' : ' disabled'}>Publish</button>
             <a class="btn" href="${back}">Cancel</a>
             ${mode === 'update' ? `<button type="button" class="btn danger" data-edit-delete${f.busy ? ' disabled' : ''}>Delete ${kind}</button>` : ''}</div>
-          ${!canPublish ? '<p class="muted small" id="publish-hint">Review your changes first; Publish turns on when the definition is valid and nothing blocks it.</p>' : ''}
+          ${!canPublish ? `<p class="muted small" id="publish-hint">${badLinks ? 'Fix or remove the links marked in the steps first.' : 'Review your changes first; Publish turns on when the definition is valid and nothing blocks it.'}</p>` : ''}
         </div>
         <div class="side"><div class="card deps freview" aria-live="polite">${fresh || !f.preview ? reviewHtml(fresh ? f.preview : null) : '<p class="muted">You changed the form since the last review. Press <b>Review changes</b> again.</p>'}</div>
           ${mode === 'update' && f.def.dependents?.length ? `<p class="muted small">Depended on by ${esc(f.def.dependents.map((x) => x.name).join(', '))}.</p>` : ''}</div>
