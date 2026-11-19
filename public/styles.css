@@ -1571,6 +1571,7 @@ a, a:hover, a:focus, a:focus-visible, a:visited, .linkbtn, .linkbtn:hover, .link
 .upd-warn svg { width: 18px; height: 18px; flex: none; margin-top: 2px; fill: none; stroke: var(--warning); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .upd-err { color: var(--destructive); }
 .upd-ok { padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--success) 14%, transparent); }
+.upd-h + .upd-ok { margin: 12px 0 0; } /* right under the title and close button */
 .upd-fix { color: var(--foreground); }
 .upd-cmd code { display: block; padding: 8px 12px; border-radius: 8px; background: var(--muted); user-select: all; overflow-x: auto; white-space: nowrap; }
 .upd-bul { padding-left: 20px; line-height: 1.6; }
