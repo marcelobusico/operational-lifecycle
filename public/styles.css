@@ -292,8 +292,10 @@ svg .ghostbox { fill: color-mix(in srgb, var(--warning) var(--tint), var(--card)
 /* ---------- projects ---------- */
 .side-features .proj .cnt { margin-left: auto; font-family: var(--font-mono); font-size: 11.5px; color: var(--muted-foreground); padding-left: 8px; }
 .side-features .proj[data-open] { color: var(--foreground); }
-.side-features .sub { list-style: none; margin: 2px 0 6px 14px; padding: 0 0 0 8px; border-left: 1px solid var(--border); }
-.side-features .sub a { padding: 5px 10px; font-size: 13px; }
+/* Features sit under their project: the guide line runs below the project's dot, and the feature dots
+   start to its right (about 12px further in than the project dot), so the two levels read apart. */
+.side-features .sub { list-style: none; margin: 2px 0 6px 37px; padding: 0 0 0 4px; border-left: 1px solid var(--border); }
+.side-features .sub a { padding: 5px 10px 5px 8px; font-size: 13px; }
 
 .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
 .pcard { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 20px 22px; text-decoration: none; overflow: hidden; min-width: 0;
