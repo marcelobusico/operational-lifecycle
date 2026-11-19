@@ -1,0 +1,6 @@
+id: 2026-11-02-redeem-rewards-rollout-25
+feature: redeem-rewards
+kind: flag
+summary: Redeem rewards rolled out to 25% of production users while catalog monitors errors.
+registered_by: "@example-dev"
+registered_at: 2026-11-02T15:00:00Z

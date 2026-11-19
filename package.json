@@ -1,0 +1,26 @@
+{
+  "name": "lifecycle",
+  "version": "0.1.0",
+  "description": "Live feature map: steps, dependencies and blockers per feature, read live from GitHub.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "setup": "node src/cli/setup.js",
+    "start": "node src/server.js",
+    "validate": "node src/cli/validate.js",
+    "status": "node src/cli/status.js",
+    "mcp": "node src/mcp.js",
+    "ask": "node src/cli/ask.js",
+    "slack-check": "node src/cli/slack-check.js",
+    "jira-check": "node src/cli/jira-check.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "1.4.0",
+    "yaml": "2.9.1"
+  }
+}

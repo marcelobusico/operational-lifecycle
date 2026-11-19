@@ -1,0 +1,27 @@
+id: redeem-rewards
+name: "Redeem rewards"
+owner: Catalog team
+project: sample
+target_date: 2026-11-13
+depends_on: [rewards-release, rewards]
+services: [catalog-api]
+flags: [redeem_rewards]
+steps:
+  - id: development
+    name: Development
+    owner: "@example-dev"
+    team: Rewards team
+    done_when: >
+      Merged to main with GitHub Actions passing.
+    evidence:
+      - source: github
+        type: pr
+        repo: acme-org/acme-monolith
+        number: 2
+# An experiment in the team's Statsig project, with what the feature does
+# in each group. Group "B" is left to Statsig's own description on purpose ("from Statsig").
+experiments:
+  - id: redeem_rewards_groups
+    groups:
+      Control: No rewards option in the reader
+      A: Can redeem rewards in the reader

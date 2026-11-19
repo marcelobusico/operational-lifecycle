@@ -1,0 +1,15 @@
+id: rewards-release
+name: "Release 0.2.2 (rewards reader)"
+owner: Catalog team
+project: sample
+steps:
+  - id: release
+    name: Release 0.2.2
+    owner: "@example-user"
+    done_when: >
+      The release PR is merged, so 0.2.2 can be deployed.
+    evidence:
+      - source: github
+        type: pr
+        repo: acme-org/acme-monolith
+        number: 17

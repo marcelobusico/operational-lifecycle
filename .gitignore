@@ -1,0 +1,7 @@
+node_modules/
+# Local state and credentials live in ~/.lifecycle, never here. Guard against copies anyway.
+.lifecycle/
+.env
+.env.*
+*.token
+.DS_Store

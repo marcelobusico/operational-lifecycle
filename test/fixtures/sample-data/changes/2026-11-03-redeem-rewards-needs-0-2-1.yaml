@@ -1,0 +1,7 @@
+id: 2026-11-03-redeem-rewards-needs-0-2-1
+feature: redeem-rewards
+kind: dependency
+summary: Redeem rewards now waits on release 0.2.1 (rewards reader fix) before going to 100%.
+registered_by: "@example-user"
+registered_at: 2026-11-03T18:30:00Z
+link: https://github.com/acme-org/acme-monolith/pull/7

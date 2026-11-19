@@ -1,0 +1,210 @@
+{
+  "_note": "Captured live 2026-11-05 from Statsig MCP experiment_read get_experiment_details_by_id (structuredContent), key fragments and project ids replaced. test/fake-statsig.js answers from this shape.",
+  "structuredContent": {
+    "data": {
+      "message": "Experiment read successfully.",
+      "data": {
+        "id": "lifecycle_check_experiment",
+        "name": "lifecycle_check_experiment",
+        "description": "Temporary: LifeCycle live check. Safe to delete.",
+        "idType": "userID",
+        "lastModifierID": "exampleOwnerId00000000",
+        "lastModifiedTime": 1793863625501,
+        "lastModifierName": "CONSOLE API - console-XXXXXXX***************",
+        "lastModifierEmail": null,
+        "creatorID": "exampleOwnerId00000000",
+        "createdTime": 1793863617174,
+        "creatorName": "CONSOLE API - console-XXXXXXX***************",
+        "creatorEmail": null,
+        "targetApps": [],
+        "holdoutIDs": [],
+        "tags": [],
+        "secondaryIDType": null,
+        "identityResolutionSource": null,
+        "owner": {
+          "ownerID": "exampleOwnerId00000000",
+          "ownerType": "SDK_KEY",
+          "ownerName": "CONSOLE API - console-XXXXXXX***************",
+          "ownerEmail": ""
+        },
+        "status": "active",
+        "launchedGroupID": null,
+        "startTime": 1793863625477,
+        "endTime": null,
+        "decisionTime": null,
+        "salt": "00000000-0000-4000-8000-000000000000",
+        "restartReason": null,
+        "originalTargetDuration": 14,
+        "isPromptExperiment": false,
+        "isTemplate": false,
+        "allowOverridesInPulse": false,
+        "excludePausedExposuresAndEvents": false,
+        "defaultImpactMultiplier": 1,
+        "bonferroniPrimaryMetricWeight": 0.5,
+        "defaultSPRTTestDelta": 0.1,
+        "defaultSPRTControlDelta": 0,
+        "isImpactBankEnabled": false,
+        "originalTargetExposures": null,
+        "reviewsRequiredLocally": false,
+        "isHistoricalCloudExperiment": false,
+        "layerID": null,
+        "hypothesis": "LifeCycle reads groups and shares",
+        "primaryMetrics": [],
+        "primaryMetricTags": [],
+        "secondaryMetrics": [],
+        "secondaryMetricTags": [],
+        "groups": [
+          {
+            "name": "Control",
+            "id": "2c9yM8HDsWJXbLePKEi3Fd",
+            "size": 50,
+            "parameterValues": {
+              "variant": "control"
+            },
+            "description": "No rewards option in the reader",
+            "disabled": false,
+            "images": [],
+            "isControl": true,
+            "shipped": false
+          },
+          {
+            "name": "Control B",
+            "id": "2c9yMamFVeTrvaMLlMdGYf",
+            "size": 25,
+            "parameterValues": {
+              "variant": "control_b"
+            },
+            "description": "Second control: same as Control",
+            "disabled": false,
+            "images": [],
+            "isControl": false,
+            "shipped": false
+          },
+          {
+            "name": "Rewards",
+            "id": "2c9yMc1Inx2VOAkGWU9khh",
+            "size": 25,
+            "parameterValues": {
+              "variant": "rewards"
+            },
+            "description": "Can redeem rewards in the reader",
+            "disabled": false,
+            "images": [],
+            "isControl": false,
+            "shipped": false
+          }
+        ],
+        "controlGroupID": "2c9yM8HDsWJXbLePKEi3Fd",
+        "allocation": 100,
+        "duration": 14,
+        "targetingGateID": "",
+        "defaultConfidenceInterval": "95",
+        "defaultRollupWindow": -1,
+        "defaultChanceToBeatThreshold": 95,
+        "bayesianPriors": [],
+        "sequentialTesting": false,
+        "bonferroniCorrection": false,
+        "bonferroniCorrectionPerMetric": false,
+        "benjaminiHochbergPerVariant": false,
+        "benjaminiHochbergPerMetric": false,
+        "benjaminiPrimaryMetricsOnly": false,
+        "decisionReason": null,
+        "healthChecks": [],
+        "healthCheckStatus": "WAITING",
+        "qualityScore": {
+          "score": 0,
+          "breakdown": [
+            {
+              "criterion": "HYPOTHESIS_LENGTH",
+              "status": "FAILED",
+              "passingDescription": "≥ 50 characters",
+              "score": 0,
+              "weight": 14.285714285714286
+            },
+            {
+              "criterion": "PRIMARY_METRICS_LENGTH",
+              "status": "FAILED",
+              "passingDescription": "1 ≤  n ≤  5",
+              "score": 0,
+              "weight": 14.285714285714286
+            },
+            {
+              "criterion": "COMPARISON_CORRECTION",
+              "status": "FAILED",
+              "passingDescription": "Added",
+              "score": 0,
+              "weight": 14.285714285714286
+            },
+            {
+              "criterion": "GUARDRAIL_METRIC_TAGS",
+              "status": "FAILED",
+              "passingDescription": "tag:★ Core",
+              "score": 0,
+              "weight": 14.285714285714286
+            },
+            {
+              "criterion": "SUFFICIENT_SAMPLE",
+              "status": "FAILED",
+              "passingDescription": "≥ 10000",
+              "score": 0,
+              "weight": 14.285714285714286
+            },
+            {
+              "criterion": "POWER_ANALYSIS",
+              "status": "FAILED",
+              "passingDescription": "Added",
+              "score": 0,
+              "weight": 14.285714285714286
+            },
+            {
+              "criterion": "SEQUENTIAL_TESTING",
+              "status": "FAILED",
+              "passingDescription": "Added",
+              "score": 0,
+              "weight": 14.285714285714286
+            }
+          ]
+        },
+        "isStale": false,
+        "reviewSettings": {
+          "requiredReview": false,
+          "allowedReviewers": []
+        },
+        "analyticsType": "frequentist",
+        "defaultSPRTPowerParam": 80,
+        "defaultSPRTMDE": 0,
+        "sprtBaselineMode": "manual",
+        "sprtMDESettings": [],
+        "summarySections": [
+          {
+            "name": "Hypothesis",
+            "content": "LifeCycle reads groups and shares"
+          },
+          {
+            "name": "Setup & Status",
+            "content": "See console for more information"
+          },
+          {
+            "name": "Groups",
+            "content": "See console for more information"
+          },
+          {
+            "name": "Metric Results",
+            "content": "See console for more information"
+          },
+          {
+            "name": "Experiment Notes",
+            "content": null
+          }
+        ],
+        "stratifiedSampling": null,
+        "experimentType": "BASE",
+        "isSidecar": false,
+        "permalink": "https://console.statsig.com/exampleProjectId000000/experiments/lifecycle_check_experiment",
+        "powerAnalyses": [],
+        "autoLoadToplineImpact": false
+      }
+    },
+    "warnings": []
+  }
+}

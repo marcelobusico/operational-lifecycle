@@ -1,0 +1,249 @@
+#!/bin/bash
+# The `lifecycle` command, installed by install.sh as ~/.lifecycle/bin/lifecycle.
+# Runs LifeCycle on this Mac only (http://lifecycle.localhost:4317, served from 127.0.0.1), with its own
+# private Node.js. See docs/install-mac.md.
+set -uo pipefail
+
+# This file lives in <home>/app/bin/ (reached through the <home>/bin/lifecycle link).
+self="${BASH_SOURCE[0]}"
+while [ -L "$self" ]; do
+  target="$(readlink "$self")"
+  case "$target" in /*) self="$target" ;; *) self="$(dirname "$self")/$target" ;; esac
+done
+APP="$(cd "$(dirname "$self")/.." && pwd)"
+if [ -n "${LIFECYCLE_HOME:-}" ]; then LC_HOME="$LIFECYCLE_HOME"
+elif [ "$(basename "$APP")" = "app" ]; then LC_HOME="$(dirname "$APP")"
+else LC_HOME="$HOME/.lifecycle"; fi
+SERVICE_ENV="$LC_HOME/service.env"
+# Port, launchd label and app folder chosen at install time (overridable for tests).
+if [ -f "$SERVICE_ENV" ]; then . "$SERVICE_ENV"; fi
+PORT="${LIFECYCLE_PORT:-${SAVED_PORT:-4317}}"
+LABEL="${LIFECYCLE_LABEL:-${SAVED_LABEL:-com.lifecycle.server}}"
+APPS_DIR="${LIFECYCLE_APPS_DIR:-${SAVED_APPS_DIR:-$HOME/Applications}}"
+NODE="$LC_HOME/runtime/node/bin/node"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+MAC_APP="$APPS_DIR/LifeCycle.app"
+LOG="$LC_HOME/logs/server.log"
+URL="http://lifecycle.localhost:$PORT"   # *.localhost is always this Mac; checks below use 127.0.0.1
+DOMAIN="gui/$(id -u)"
+SOURCE_REPO="${LIFECYCLE_SOURCE_REPO:-marcelobusico/operational-lifecycle}"
+export LIFECYCLE_HOME="$LC_HOME"
+# Shown paths use ~/… (still copy-pasteable); a path with spaces is quoted instead.
+short() { case "$1" in *" "*) printf '"%s"' "$1" ;; "$HOME"/*) printf '~/%s' "${1#"$HOME"/}" ;; *) printf '%s' "$1" ;; esac; }
+CMD="$(short "$LC_HOME/bin/lifecycle")"
+HOME_SHOWN="$(short "$LC_HOME")"
+
+say() { printf '%s\n' "$*"; }
+die() { printf '✗ %s\n' "$1" >&2; [ -n "${2:-}" ] && printf '  What to do: %s\n' "$2" >&2; exit 1; }
+need_node() { [ -x "$NODE" ] || die "LifeCycle's Node.js is missing ($NODE)." "Run the installer again: bash <unzipped LifeCycle folder>/install.sh"; }
+loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
+# True when the page at $URL is LifeCycle (and not some other program using the port).
+answering() { curl -fsS --max-time 2 "http://127.0.0.1:$PORT/" 2>/dev/null | grep -q '<title>LifeCycle</title>'; }
+port_taken() { lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; }
+
+cmd_install_service() {
+  need_node
+  mkdir -p "$LC_HOME/logs" "$(dirname "$PLIST")" "$APPS_DIR"
+  printf 'SAVED_PORT=%q\nSAVED_LABEL=%q\nSAVED_APPS_DIR=%q\n' "$PORT" "$LABEL" "$APPS_DIR" > "$SERVICE_ENV"
+  # Starts at login, restarts if it stops unexpectedly. Listens on 127.0.0.1 only (src/server.js).
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array><string>$NODE</string><string>$APP/src/server.js</string></array>
+  <key>WorkingDirectory</key><string>$APP</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LIFECYCLE_HOME</key><string>$LC_HOME</string>
+    <key>LIFECYCLE_PORT</key><string>$PORT</string>
+    <key>PATH</key><string>$LC_HOME/runtime/node/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$LOG</string>
+</dict>
+</plist>
+EOF
+  plutil -lint "$PLIST" >/dev/null || die "The start-at-login file is not valid ($PLIST)." "Report it to the LifeCycle team."
+  # A double-clickable LifeCycle in Applications (and Spotlight) that opens it in the browser.
+  rm -rf "$MAC_APP"
+  mkdir -p "$MAC_APP/Contents/MacOS"
+  cat > "$MAC_APP/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>LifeCycle</string>
+  <key>CFBundleDisplayName</key><string>LifeCycle</string>
+  <key>CFBundleIdentifier</key><string>$LABEL.open</string>
+  <key>CFBundleExecutable</key><string>LifeCycle</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP/package.json" | head -1)</string>
+  <key>LSUIElement</key><true/>
+</dict>
+</plist>
+EOF
+  cat > "$MAC_APP/Contents/MacOS/LifeCycle" <<EOF
+#!/bin/bash
+export LIFECYCLE_HOME=$(printf '%q' "$LC_HOME")
+out="\$("$LC_HOME/bin/lifecycle" open 2>&1)" || osascript -e "display alert \"LifeCycle did not open\" message \"\$(printf '%s' "\$out" | tr '"' "'")\"" >/dev/null
+EOF
+  chmod +x "$MAC_APP/Contents/MacOS/LifeCycle"
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$MAC_APP" >/dev/null 2>&1 || true
+  say "  ✓ LifeCycle will start on its own when you log in, and \"LifeCycle\" is in $APPS_DIR"
+}
+
+cmd_start() {
+  need_node
+  [ -f "$PLIST" ] || die "LifeCycle is not set up to run on this Mac yet." "Run the installer: bash <unzipped LifeCycle folder>/install.sh"
+  if ! loaded && port_taken && ! answering; then
+    die "Another program on this Mac is already using port $PORT, so LifeCycle can't start." "Quit that program (or restart the Mac) and run: $CMD start"
+  fi
+  if loaded; then launchctl kickstart -k "$DOMAIN/$LABEL" >/dev/null 2>&1
+  else launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null || launchctl kickstart -k "$DOMAIN/$LABEL" >/dev/null 2>&1; fi
+  for _ in $(seq 1 40); do
+    if answering; then say "  ✓ LifeCycle is running at $URL (served from this Mac only)"; return 0; fi
+    sleep 0.5
+  done
+  printf '  Last lines of %s:\n' "$LOG" >&2; tail -n 8 "$LOG" 2>/dev/null | sed 's/^/    /' >&2
+  die "LifeCycle did not answer at $URL within 20 seconds." "Read the lines above. Run '$CMD start' to try again, or '$CMD setup' if they mention credentials."
+}
+
+cmd_stop() {
+  if loaded; then launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true; fi
+  for _ in $(seq 1 20); do answering || break; sleep 0.25; done
+  say "  ✓ LifeCycle is stopped. It starts again on its own next time you log in, or with: $CMD start"
+}
+
+cmd_status() {
+  local v; v="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$APP/package.json" | head -1)"
+  local c; c="$(sed -n 's/.*"commit": *"\([0-9a-f]\{7\}\).*/\1/p' "$APP/installed-commit.json" 2>/dev/null | head -1)"
+  say "LifeCycle $v (${c:+commit $c of main}${c:-installed commit unknown}) · Node.js $("$NODE" -v 2>/dev/null || echo missing) (private, in $HOME_SHOWN/runtime)"
+  say "Settings: $HOME_SHOWN"
+  if answering; then say "Running at $URL"; elif loaded; then say "Starting or failing to start: see $CMD logs"; else say "Not running. Start it with: $CMD start"; fi
+  answering
+}
+
+cmd_open() {
+  answering || cmd_start || return 1
+  open "$URL"
+}
+
+cmd_setup() {
+  need_node
+  "$NODE" "$APP/src/cli/setup.js" "$@" || return 1
+  if loaded; then say ""; cmd_start; fi
+}
+
+cmd_logs() { tail -n "${1:-50}" "$LOG"; }
+
+# Dry run of reading app releases from a Slack release channel (src/cli/slack-check.js). Commits nothing.
+cmd_slack_check() {
+  need_node
+  "$NODE" "$APP/src/cli/slack-check.js" "$@"
+}
+
+# Dry run of reading Jira tickets through Claude Code (src/cli/jira-check.js). Commits nothing.
+cmd_jira_check() {
+  need_node
+  "$NODE" "$APP/src/cli/jira-check.js" "$@"
+}
+
+# Update: get the newest LifeCycle (from GitHub with your saved credentials, or from a folder you
+# downloaded) and run its installer. Settings and credentials in ~/.lifecycle are kept.
+cmd_update() {
+  need_node
+  local from="" ref="${LIFECYCLE_UPDATE_REF:-main}"
+  while [ $# -gt 0 ]; do
+    case "$1" in --from) from="${2:-}"; shift 2 ;; --ref) ref="${2:-}"; shift 2 ;; *) die "Unknown option $1" "Use: lifecycle update [--from <folder>] [--ref <branch or tag>]" ;; esac
+  done
+  if [ -z "$from" ]; then
+    local token api tmp
+    token="$("$NODE" --input-type=module -e "const m = await import('$APP/src/config.js'); process.stdout.write(m.githubToken() || '')" 2>/dev/null)"
+    [ -n "$token" ] || die "No GitHub access is set up, so the update can't be downloaded." "Run '$CMD setup' first, or download the new ZIP from GitHub and run its install.sh."
+    api="${LIFECYCLE_GITHUB_API:-https://api.github.com}"
+    tmp="$(mktemp -d)"
+    say "Downloading LifeCycle ($SOURCE_REPO, $ref) from GitHub…"
+    curl -fsSL --connect-timeout 15 -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+      -o "$tmp/lifecycle.tgz" "$api/repos/$SOURCE_REPO/tarball/$ref" \
+      || die "Could not download LifeCycle from GitHub ($SOURCE_REPO, $ref)." "Check your internet connection and that your GitHub access can read $SOURCE_REPO. Or download the ZIP from GitHub and run its install.sh."
+    mkdir -p "$tmp/src" && tar -xzf "$tmp/lifecycle.tgz" -C "$tmp/src" --strip-components 1 || die "The download could not be unpacked." "Try again."
+    from="$tmp/src"
+    [ -f "$from/install.sh" ] || die "The LifeCycle version on GitHub ($SOURCE_REPO, $ref) has no Mac installer, so it can't update this install." "Keep using the version you have, or ask the LifeCycle team which branch or tag to use: lifecycle update --ref <name>"
+  fi
+  [ -f "$from/install.sh" ] || die "$from does not contain LifeCycle's install.sh." "Point --from at the unzipped LifeCycle folder."
+  export LIFECYCLE_PORT="$PORT" LIFECYCLE_LABEL="$LABEL" LIFECYCLE_APPS_DIR="$APPS_DIR"
+  exec bash "$from/install.sh"
+}
+
+cmd_uninstall() {
+  local keep=""
+  # Never delete anything outside an installed LifeCycle home (e.g. when run from a git checkout).
+  case "$LC_HOME" in ""|/|"$HOME"|"$HOME/") die "Refusing to uninstall from $LC_HOME." "Set LIFECYCLE_HOME to the LifeCycle folder (normally ~/.lifecycle)." ;; esac
+  [ "$(cd "$APP" && pwd -P)" = "$(cd "$LC_HOME/app" 2>/dev/null && pwd -P)" ] || die "This copy of LifeCycle ($APP) is not an installed one, so there is nothing to uninstall from here." "Run the installed command instead: $CMD uninstall"
+  for a in "$@"; do case "$a" in --keep-settings) keep=yes ;; --remove-settings) keep=no ;; *) die "Unknown option $a" "Use: lifecycle uninstall [--keep-settings | --remove-settings]" ;; esac; done
+  if [ -z "$keep" ]; then
+    say "This removes LifeCycle from this Mac. Your settings are your shared repo choice and your GitHub"
+    say "(and optional Flagsmith/AI) credentials, plus local history, in $HOME_SHOWN."
+    printf 'Keep your settings so a later reinstall picks them up? [Y/n]: '
+    read -r answer </dev/tty || answer=""
+    case "$answer" in n|N|no|No|NO) keep=no ;; *) keep=yes ;; esac
+  fi
+  if loaded; then launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true; fi
+  rm -f "$PLIST"
+  rm -rf "$MAC_APP"
+  if [ "$keep" = yes ]; then
+    rm -rf "$LC_HOME/runtime" "$LC_HOME/bin" "$SERVICE_ENV" "$LC_HOME/app.old" "$LC_HOME/app.new" "$APP"
+    say "✓ LifeCycle is uninstalled. Your settings are kept in $HOME_SHOWN (delete that folder to remove them)."
+  else
+    rm -rf "$LC_HOME"
+    say "✓ LifeCycle is uninstalled, and your settings and credentials are deleted from this Mac."
+  fi
+  say "  Nothing else was changed: any Node.js, Homebrew or other tool you had is untouched."
+  say "  If you made a GitHub token for LifeCycle, you can also revoke it at https://github.com/settings/tokens"
+}
+
+usage() {
+  cat <<EOF
+LifeCycle on this Mac ($URL)
+
+  lifecycle open        open LifeCycle in your browser (starts it if needed)
+  lifecycle start       start it (it also starts on its own when you log in)
+  lifecycle stop        stop it until next login
+  lifecycle status      is it running? which version?
+  lifecycle setup       change the shared repo or GitHub access (and optional extras)
+  lifecycle update      install the newest version, keeping your settings
+                        (--from <folder> to use a downloaded copy instead)
+  lifecycle uninstall   remove it; asks whether to keep your settings
+                        (--keep-settings | --remove-settings to skip the question)
+  lifecycle logs        last lines of the server log
+  lifecycle slack-check show what LifeCycle reads from your Slack release channel,
+                        without saving anything (--days 14, --app <app id>)
+  lifecycle jira-check  show how LifeCycle reads your Jira tickets (all linked ones, or
+                        the keys you name), without saving anything
+
+Type it as: $CMD <command>
+EOF
+}
+
+case "${1:-}" in
+  open) cmd_open ;;
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  restart) cmd_start ;;
+  status) cmd_status ;;
+  setup) shift; cmd_setup "$@" ;;
+  update) shift; cmd_update "$@" ;;
+  uninstall) shift; cmd_uninstall "$@" ;;
+  logs) shift; cmd_logs "$@" ;;
+  slack-check) shift; cmd_slack_check "$@" ;;
+  jira-check) shift; cmd_jira_check "$@" ;;
+  install-service) cmd_install_service ;;
+  ""|help|-h|--help) usage ;;
+  *) usage; exit 1 ;;
+esac

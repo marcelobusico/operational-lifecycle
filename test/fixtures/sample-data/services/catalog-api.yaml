@@ -1,0 +1,7 @@
+id: catalog-api
+name: Catalog API
+owner: Catalog team
+repo: acme-org/acme-monolith
+environments:
+  qa: qa
+  production: production

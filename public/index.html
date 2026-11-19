@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LifeCycle</title>
+  <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg">
+  <script>
+    // Theme before first paint: saved choice, else the system's.
+    try {
+      const t = localStorage.getItem('lifecycle-theme');
+      const dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.classList.toggle('dark', dark);
+    } catch { document.documentElement.classList.add('dark'); }
+    // Sidebar before first paint: below 900px always the icon rail; from 900px up the saved
+    // choice, else expanded (see sidebar in app.js).
+    try {
+      const narrow = !matchMedia('(min-width: 900px)').matches;
+      document.documentElement.classList.toggle('rail', narrow || localStorage.getItem('lifecycle-sidebar') === 'collapsed');
+    } catch { document.documentElement.classList.toggle('rail', innerWidth < 900); }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!-- Geist loads without blocking: offline, the system font is used and the page still renders. -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="shell">
+    <aside id="sidebar" class="sidebar" aria-label="Navigation">
+      <div class="brand">
+        <a class="logo" href="#/" aria-label="LifeCycle home">
+          <img class="lockup" src="/brand/lifecycle-lockup.svg" alt="" width="140" height="43">
+          <img class="mark" src="/brand/lifecycle-mark.svg" alt="" width="32" height="32">
+        </a>
+        <button id="sb-toggle" type="button" class="sb-toggle" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse sidebar">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3.5" width="14" height="13" rx="2.5"/><path d="M8 3.5v13"/><path class="chev" d="M13.2 8 11 10l2.2 2"/></svg>
+        </button>
+      </div>
+      <nav class="nav">
+        <a data-label="Home" href="#/" data-route="home"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 9 10 3.5 16.5 9v7.5h-4.5v-4.5h-4v4.5H3.5z"/></svg><span class="lbl">Home</span></a>
+        <a data-label="Roadmap" href="#/roadmap" data-route="roadmap"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h8M6 10h10M3 14.5h6"/></svg><span class="lbl">Roadmap</span></a>
+        <a data-label="Dependency map" href="#/map" data-route="map"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4.5" cy="10" r="2.2"/><circle cx="15.5" cy="4.5" r="2.2"/><circle cx="15.5" cy="15.5" r="2.2"/><path d="M6.6 9l6.8-3.6M6.6 11l6.8 3.6"/></svg><span class="lbl">Dependency map</span></a>
+      </nav>
+      <div class="side-label">Projects</div>
+      <ul id="side-features" class="side-features"></ul>
+      <div class="side-foot">
+        <div class="side-sync">
+          <span id="sync-status" class="sync-pill" role="status" aria-live="polite"><span class="dot"></span><span class="lbl">Loading…</span></span>
+          <button id="refresh" type="button" class="ghost" aria-label="Refresh: read everything live again">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.2h-3.2"/></svg><span class="lbl">Refresh</span>
+          </button>
+        </div>
+        <button id="update-btn" type="button" class="ghost upd-btn" data-label="Check for updates" aria-haspopup="dialog">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.2h-3.2M10 7v4.5M8 9.5l2 2 2-2"/></svg>
+          <span class="lbl">Check for updates<span class="upd-sr sr" hidden> (update available)</span></span>
+          <span class="upd-dot" hidden aria-hidden="true"></span>
+        </button>
+        <button id="theme" type="button" class="ghost" aria-label="Toggle light or dark theme">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3a7 7 0 1 0 7 7 5.5 5.5 0 0 1-7-7z"/></svg>
+          <span class="lbl">Theme</span>
+        </button>
+        <a class="built-with" href="https://taller.ai/chiron" target="_blank" rel="noopener" aria-label="Built with Chiron by Taller (opens taller.ai)">
+          <span>Built with</span><span class="chiron-logo" aria-hidden="true"></span><span>by Taller</span>
+        </a>
+      </div>
+    </aside>
+    <div class="content">
+      <header class="topbar">
+        <a id="top-alerts" class="top-alerts" href="#/alerts" data-route="alerts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5c0 4-1.8 5.5-1.8 5.5h12.6s-1.8-1.5-1.8-5.5A4.5 4.5 0 0 0 10 3zM8.3 15.8a1.9 1.9 0 0 0 3.4 0"/></svg><span>Alerts</span><span id="alert-count" class="ncount" hidden></span></a>
+      </header>
+      <div id="banners" class="banners"></div>
+      <main id="main" tabindex="-1"></main>
+    </div>
+    <div id="sb-backdrop" class="sb-backdrop" hidden></div>
+    <button id="chat-launch" type="button" class="chat-launch" aria-controls="chatdock" aria-expanded="false">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 2.5l1.3 3.7L13 7.5l-3.7 1.3L8 12.5 6.7 8.8 3 7.5l3.7-1.3zM14.5 11l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>Ask LifeCycle</span>
+    </button>
+    <aside id="chatdock" class="chatdock" aria-label="Ask LifeCycle" hidden></aside>
+    <dialog id="update-dlg" class="upd-dlg" aria-labelledby="upd-title"><div id="upd-body"></div></dialog>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

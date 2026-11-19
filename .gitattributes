@@ -1,0 +1,3 @@
+# GitHub's "Download ZIP" and the tarball API fill in .lifecycle-source with the commit they were
+# made from (git archive export-subst), so a ZIP install knows which `main` commit it runs.
+.lifecycle-source export-subst
