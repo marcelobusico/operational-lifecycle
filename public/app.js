@@ -3098,6 +3098,47 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && drawerOp
 wide.addEventListener('change', () => setSidebar());
 setSidebar();
 
+// Sidebar width: drag the handle on its right edge (or focus it and use ←/→) to show full project
+// and feature names; double-click resets. Saved on this machine ('lifecycle-sidebar-width'), 248–560px.
+const SB_W_KEY = 'lifecycle-sidebar-width';
+const SB_MIN = 248, SB_MAX = 560;
+const sbResize = $('#sb-resize');
+function setSidebarWidth(px, { save = true } = {}) {
+  // Never so wide that the page next to it gets narrower than 480px.
+  const w = Math.round(Math.min(SB_MAX, Math.max(SB_MIN, innerWidth - 480), Math.max(SB_MIN, px)));
+  if (w === SB_MIN) root.style.removeProperty('--sb-w'); else root.style.setProperty('--sb-w', `${w}px`);
+  sbResize.setAttribute('aria-valuenow', String(w));
+  if (save) { try { if (w === SB_MIN) localStorage.removeItem(SB_W_KEY); else localStorage.setItem(SB_W_KEY, String(w)); } catch { /* private mode */ } }
+  return w;
+}
+const sidebarWidth = () => $('#sidebar').getBoundingClientRect().width;
+sbResize.setAttribute('aria-valuemin', String(SB_MIN));
+sbResize.setAttribute('aria-valuemax', String(SB_MAX));
+sbResize.setAttribute('aria-valuenow', String(Math.round(sidebarWidth())));
+sbResize.addEventListener('pointerdown', (e) => {
+  if (!wide.matches || root.classList.contains('rail')) return;
+  e.preventDefault();
+  sbResize.setPointerCapture(e.pointerId);
+  root.classList.add('sb-resizing');
+  const move = (ev) => setSidebarWidth(ev.clientX, { save: false });
+  const up = (ev) => {
+    sbResize.removeEventListener('pointermove', move);
+    sbResize.removeEventListener('pointerup', up);
+    sbResize.removeEventListener('pointercancel', up);
+    root.classList.remove('sb-resizing');
+    setSidebarWidth(ev.clientX);
+  };
+  sbResize.addEventListener('pointermove', move);
+  sbResize.addEventListener('pointerup', up);
+  sbResize.addEventListener('pointercancel', up);
+});
+sbResize.addEventListener('dblclick', () => setSidebarWidth(SB_MIN));
+sbResize.addEventListener('keydown', (e) => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  setSidebarWidth(sidebarWidth() + (e.key === 'ArrowRight' ? 24 : -24));
+});
+
 window.addEventListener('hashchange', () => { closeDrawer(); render(); $('#main').focus(); window.scrollTo(0, 0); });
 $('#refresh').addEventListener('click', load);
 $('#theme').addEventListener('click', () => {

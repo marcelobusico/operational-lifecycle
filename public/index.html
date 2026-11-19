@@ -17,6 +17,8 @@
     try {
       const narrow = !matchMedia('(min-width: 900px)').matches;
       document.documentElement.classList.toggle('rail', narrow || localStorage.getItem('lifecycle-sidebar') === 'collapsed');
+      const w = Number(localStorage.getItem('lifecycle-sidebar-width'));
+      if (!narrow && w >= 248 && w <= 560) document.documentElement.style.setProperty('--sb-w', `${w}px`);
     } catch { document.documentElement.classList.toggle('rail', innerWidth < 900); }
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -68,6 +70,8 @@
         </a>
       </div>
     </aside>
+    <!-- Outside the sidebar (which scrolls, and whose scrollbar would cover it): fixed on its right edge. -->
+    <div id="sb-resize" class="sb-resize" role="separator" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize the sidebar" tabindex="0" title="Drag to widen the sidebar (double-click to reset)"></div>
     <div class="content">
       <header class="topbar">
         <a id="top-alerts" class="top-alerts" href="#/alerts" data-route="alerts"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5c0 4-1.8 5.5-1.8 5.5h12.6s-1.8-1.5-1.8-5.5A4.5 4.5 0 0 0 10 3zM8.3 15.8a1.9 1.9 0 0 0 3.4 0"/></svg><span>Alerts</span><span id="alert-count" class="ncount" hidden></span></a>
