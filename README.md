@@ -451,7 +451,7 @@ and the API: [docs/alerts-format.md](docs/alerts-format.md).
 
 Teams are defined once in LifeCycle-Data (`teams/<id>.yaml`): a fixed id, a name, and what the team
 owns (repos, ticket sources, services, apps, feature flags). Create, rename, edit and delete them on
-the **Teams** page or by asking the chat ("create a team called Wishlist that owns the acme-wishlist
+the **Teams** page (in the sidebar) or by asking the chat ("create a team called Wishlist that owns the acme-wishlist
 repo and the redeem_rewards flag"): the chat shows a preview and saves only when you confirm, as a
 commit under your GitHub user. Every feature page shows **Teams it depends on**, each
 with its reason and a link (a step's team, the owner of a service, repo, ticket source, flag or app
