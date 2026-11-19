@@ -331,6 +331,7 @@ fixing it needs no restart (within 30 seconds).
 | **No GitHub access works for LifeCycle right now (gh said: no oauth token found for github.com)** | gh works in your Terminal only through `GITHUB_TOKEN`. Give gh its own login: `env -u GITHUB_TOKEN gh auth login`, or paste a token with `lifecycle setup`. Setup warns about this case. |
 | **… isn't authorized for this organization's single sign-on** | Open the link in the message to authorize the token (for gh: `gh auth refresh -h github.com`). |
 | **Your GitHub credentials (…) can't read …** | Check the repo name (`dataRepo` in `~/.lifecycle/config.json`) and that this GitHub account was invited to it. |
+| **Claude Code couldn't read … / a command was not found** (AI review, Slack, Jira) | LifeCycle at login has a short PATH. Run `lifecycle setup` (or `setup --extras`) once from your Terminal: it saves Claude Code's full path and your Terminal's PATH, so Claude Code and any sign-in helper it runs (an `apiKeyHelper`, `aws`, `gcloud`…) are found. |
 | **This copy of LifeCycle (…) is a download or clone, not your installed LifeCycle** | Run the installed command, `~/.lifecycle/bin/lifecycle`, not `bin/lifecycle` in the folder you downloaded. |
 
 Cards on Home never show a bare "Status unavailable": they say which source couldn't be read (or

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './app.js';
-import { appUrl, markNoticeSeen } from './config.js';
+import { appUrl, markNoticeSeen, loadConfig, withToolPath } from './config.js';
 import { redact } from './log.js';
 import { createAskService } from './ask/service.js';
 import { personalView, markSeen, SOURCES } from './alerts/inbox.js';
@@ -393,6 +393,9 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  // At login LifeCycle has a short PATH: add the Terminal's folders saved by setup (src/config.js).
+  const toolPath = loadConfig().toolPath;
+  if (toolPath) process.env.PATH = withToolPath(process.env.PATH, toolPath);
   const app = createApp();
   const { port } = app.config;
   createServer(app, createAskService({ app }), createUpdateService({ port })).listen(port, '127.0.0.1', () => {
