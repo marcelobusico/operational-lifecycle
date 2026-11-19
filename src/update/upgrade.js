@@ -55,7 +55,7 @@ function run(cmd, args, { cwd, env, timeoutMs }) {
 
 export function createUpdater({
   appRoot = APP_ROOT, home = homeDir(), repo = SOURCE_REPO(), token, apiUrl, fetchImpl = fetch,
-  nodeBin, npmCli, npmRegistry = process.env.LIFECYCLE_NPM_REGISTRY || 'https://registry.npmjs.org/',
+  nodeBin, npmCli, npmRegistry = process.env.LIFECYCLE_NPM_REGISTRY || null,
   port, helperEnv = {},
 } = {}) {
   const work = path.join(home, 'update');
@@ -133,14 +133,19 @@ export function createUpdater({
     // 3. libraries, with LifeCycle's Node.js only (the private copy, or the one chosen at install).
     current.step = 'libraries';
     const env = {
+      // npm reads the person's ~/.npmrc (registry, proxy, cafile) unless a registry is forced.
       HOME: process.env.HOME, PATH: `${path.dirname(node)}:/usr/bin:/bin:/usr/sbin:/sbin`,
-      npm_config_registry: npmRegistry, npm_config_fetch_retries: '1', npm_config_fetch_timeout: '20000',
+      ...(npmRegistry ? { npm_config_registry: npmRegistry } : {}),
+      ...(process.env.NODE_EXTRA_CA_CERTS ? { NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS } : {}),
+      npm_config_fetch_retries: '1', npm_config_fetch_timeout: '20000',
       npm_config_update_notifier: 'false', ...(process.env.npm_config_cache ? { npm_config_cache: process.env.npm_config_cache } : {}),
     };
     const ci = await run(node, [npm, 'ci', '--omit=dev', '--no-audit', '--no-fund', '--loglevel=error'], { cwd: staging, env, timeoutMs: 5 * 60 * 1000 });
     if (ci.code !== 0) {
+      const cert = /certificate|SELF_SIGNED|UNABLE_TO|CERT_/i.test(ci.out);
       throw new StepError('libraries', "The new version's libraries could not be installed from the npm registry.",
-        'Check your internet connection (a company VPN or network may block registry.npmjs.org), then try again.');
+        cert ? "Your network seems to re-sign HTTPS with its own certificate. Ask IT for its root certificate (.pem) and update in Terminal: LIFECYCLE_CA_FILE=/path/to/root.pem ~/.lifecycle/bin/lifecycle update"
+          : 'Check your internet connection (a company VPN or network may block your npm registry: registry.npmjs.org unless your ~/.npmrc sets another), then try again.');
     }
 
     // 4. restart: handed to a detached helper, because restarting ends this process.

@@ -26,6 +26,9 @@ if [ -s "$NODE_PATH_FILE" ]; then NODE="$(head -1 "$NODE_PATH_FILE")"; OWN_NODE=
 else NODE="$LC_HOME/runtime/node/bin/node"; OWN_NODE=""; fi
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 MAC_APP="$APPS_DIR/LifeCycle.app"
+# A root certificate to trust on top of the usual ones (install.sh LIFECYCLE_CA_FILE), for every HTTPS call.
+CA_SAVED="$LC_HOME/ca.pem"; CA_BUNDLE="$LC_HOME/ca-bundle.pem"; CA=""
+if [ -s "$CA_SAVED" ]; then CA=yes; export NODE_EXTRA_CA_CERTS="$CA_SAVED"; fi
 LOG="$LC_HOME/logs/server.log"
 URL="http://lifecycle.localhost:$PORT"   # *.localhost is always this Mac; checks below use 127.0.0.1
 DOMAIN="gui/$(id -u)"
@@ -67,6 +70,7 @@ cmd_install_service() {
   <dict>
     <key>LIFECYCLE_HOME</key><string>$LC_HOME</string>
     <key>LIFECYCLE_PORT</key><string>$PORT</string>
+$([ -n "$CA" ] && printf '    <key>NODE_EXTRA_CA_CERTS</key><string>%s</string>' "$CA_SAVED")
     <key>PATH</key><string>$(dirname "$NODE"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key><true/>
@@ -136,6 +140,7 @@ cmd_status() {
   local c; c="$(sed -n 's/.*"commit": *"\([0-9a-f]\{7\}\).*/\1/p' "$APP/installed-commit.json" 2>/dev/null | head -1)"
   say "LifeCycle $v ($([ -n "$c" ] && printf 'commit %s of main' "$c" || printf 'installed commit unknown')) · Node.js $("$NODE" -v 2>/dev/null || echo missing) ($([ -n "$OWN_NODE" ] && printf 'yours, at %s' "$(short "$NODE")" || printf 'private, in %s/runtime' "$HOME_SHOWN"))"
   say "Settings: $HOME_SHOWN"
+  [ -z "$CA" ] || say "Extra root certificate trusted: $(short "$CA_SAVED")"
   if answering; then say "Running at $URL"; elif loaded; then say "Starting or failing to start: see $CMD logs"; else say "Not running. Start it with: $CMD start"; fi
   answering
 }
@@ -180,7 +185,7 @@ cmd_update() {
     api="${LIFECYCLE_GITHUB_API:-https://api.github.com}"
     tmp="$(mktemp -d)"
     say "Downloading LifeCycle ($SOURCE_REPO, $ref) from GitHub…"
-    curl -fsSL --connect-timeout 15 -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
+    curl -fsSL --connect-timeout 15 ${CA:+--cacert "$CA_BUNDLE"} -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" \
       -o "$tmp/lifecycle.tgz" "$api/repos/$SOURCE_REPO/tarball/$ref" \
       || die "Could not download LifeCycle from GitHub ($SOURCE_REPO, $ref)." "Check your internet connection and that your GitHub access can read $SOURCE_REPO. Or download the ZIP from GitHub and run its install.sh."
     mkdir -p "$tmp/src" && tar -xzf "$tmp/lifecycle.tgz" -C "$tmp/src" --strip-components 1 || die "The download could not be unpacked." "Try again."

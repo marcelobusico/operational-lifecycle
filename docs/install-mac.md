@@ -243,6 +243,27 @@ LIFECYCLE_NODE=/opt/homebrew/bin/node ./install.sh   # or a specific one
 - Older than 20, or no npm next to it: the installer stops at step 3 and says so, without
   changing your install.
 
+### Company npm registry or HTTPS proxy
+
+- **Your own npm registry**: the installer and updates use your npm settings (`~/.npmrc`:
+  `registry`, `proxy`, `https-proxy`, `cafile`), so a company registry or mirror works with
+  nothing extra. Without a `~/.npmrc`, npm uses registry.npmjs.org. When it fails, the message
+  names the registry it tried.
+- **A proxy or registry with its own (self-signed) root certificate**: ask IT for the root
+  certificate as a `.pem` file and install with it:
+
+  ```bash
+  LIFECYCLE_CA_FILE=/path/to/company-root.pem ./install.sh
+  ```
+
+  It is copied to `~/.lifecycle/ca.pem` and trusted **in addition to** the usual certificates,
+  everywhere LifeCycle connects: the Node.js download, npm, `lifecycle update`, and the running
+  app (GitHub, Statsig, Flagsmith, the AI provider, Claude Code). If `NODE_EXTRA_CA_CERTS` is
+  already set in your Terminal, the installer uses that file. Updates keep it;
+  `LIFECYCLE_CA_FILE=none ./install.sh` removes it. `lifecycle status` shows when one is in use.
+  There is no option to turn certificate checks off.
+- When a download fails because of a certificate, the installer says so and suggests this.
+
 ### What gets downloaded, and from where
 
 Only during install and update:
@@ -265,6 +286,7 @@ published or hosted. Updates can only be started from LifeCycle's own page on yo
 |---|---|---|
 | `~/.lifecycle/app` | LifeCycle's code | Yes |
 | `~/.lifecycle/runtime` | Private Node.js | Yes |
+| `~/.lifecycle/ca.pem`, `ca-bundle.pem` | Your network's root certificate, only when installed with `LIFECYCLE_CA_FILE` | Only if you choose to remove settings |
 | `~/.lifecycle/node-path` | Which Node.js to use, only when installed with `LIFECYCLE_NODE` (no `runtime` then) | Yes |
 | `~/.lifecycle/bin/lifecycle` | The `lifecycle` command | Yes |
 | `~/Library/LaunchAgents/com.lifecycle.server.plist` | Starts LifeCycle when you log in | Yes |
