@@ -95,6 +95,9 @@ export const DEFAULTS = {
   // Who you are, for "features I own" in the digest: the owner names you answer to in definitions
   // (a GitHub handle like "@example-dev" and/or a team like "Catalog team").
   me: { owners: [], github: null },
+  // The PATH of the Terminal where setup last ran. LifeCycle at login has a short PATH, so it adds
+  // these folders after its own: Claude Code, a sign-in helper it runs, gh and git are found as in Terminal.
+  toolPath: null,
   // Days before a target date when a feature that isn't fully on counts as at risk.
   atRiskDays: 14,
 };
@@ -284,6 +287,13 @@ export function aiKey(provider) {
   return creds?.ai?.[provider]?.apiKey?.trim() || null;
 }
 
+// PATH for the tools LifeCycle runs: its own PATH first, then the saved Terminal folders not in it.
+export function withToolPath(currentPath, toolPath) {
+  const own = String(currentPath || '').split(path.delimiter).filter(Boolean);
+  const extra = String(toolPath || '').split(path.delimiter).filter((d) => d && path.isAbsolute(d) && !own.includes(d));
+  return [...own, ...new Set(extra)].join(path.delimiter);
+}
+
 // Where the GitHub CLI is: the path saved by setup, then PATH, then the usual install places
 // (Homebrew on Apple Silicon and Intel, ~/.local/bin, MacPorts). LifeCycle runs at login with a
 // minimal PATH, so PATH alone is not enough. null when gh is not installed.
@@ -292,10 +302,20 @@ export function findGhCli(saved) {
 }
 
 // Where a command-line tool is: `saved`, then PATH, then the usual install places (Claude Code's
-// own installer uses ~/.local/bin and ~/.claude/local). null when it isn't found.
+// own installer uses ~/.local/bin and ~/.claude/local; npm installs go under nvm, Volta…). null when
+// it isn't found.
 export function findCli(name, saved = null) {
+  const home = os.homedir();
+  // Tools installed with npm under a Node version manager (nvm, newest version first), Volta, a
+  // user npm prefix or Bun: not on the short PATH LifeCycle has at login.
+  let nvm = [];
+  try {
+    const base = path.join(home, '.nvm', 'versions', 'node');
+    nvm = fs.readdirSync(base).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map((v) => path.join(base, v, 'bin'));
+  } catch { /* no nvm */ }
   const dirs = [...(process.env.PATH || '').split(path.delimiter), '/opt/homebrew/bin', '/usr/local/bin',
-    path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.claude', 'local'), '/opt/local/bin'];
+    path.join(home, '.local', 'bin'), path.join(home, '.claude', 'local'), '/opt/local/bin',
+    ...nvm, path.join(home, '.volta', 'bin'), path.join(home, '.npm-global', 'bin'), path.join(home, '.bun', 'bin')];
   for (const candidate of [saved, ...dirs.filter(Boolean).map((d) => path.join(d, name))]) {
     if (!candidate) continue;
     try {

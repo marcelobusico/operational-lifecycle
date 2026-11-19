@@ -233,6 +233,9 @@ async function main() {
     ? 'Welcome to LifeCycle. Two questions and you are done.'
     : 'LifeCycle setup. Press Return to keep each current answer.');
   console.log(`Your answers stay on this Mac, in ${homeDir()}. Nothing is sent anywhere except GitHub, to check your access.\n`);
+  // LifeCycle at login has a short PATH; it adds this Terminal's folders so Claude Code (and a sign-in
+  // helper it runs), gh and git are found as here. Saved with the first answer below.
+  if (process.env.PATH) config.toolPath = process.env.PATH;
 
   let connected = true;
   if (!extrasOnly) {
@@ -437,6 +440,18 @@ async function setupFlagsmith(config) {
 }
 
 // Ask & digest: which AI provider answers on this machine. The key stays in credentials.json.
+// Claude Code's full path as found from this Terminal (whose PATH has nvm, Homebrew…), saved so
+// LifeCycle at login, with a short PATH, runs the same one. A full path the person set is kept.
+function claudeCommand(current) {
+  const cmd = Array.isArray(current) && current.length ? current : ['claude', '-p'];
+  if (cmd[0].includes('/')) return { cmd, bin: fs.existsSync(cmd[0]) ? cmd[0] : null };
+  const bin = findCli(cmd[0]);
+  return { cmd: bin ? [bin, ...cmd.slice(1)] : cmd, bin };
+}
+function savedAiKey(provider) {
+  try { return JSON.parse(fs.readFileSync(paths.credentials(), 'utf8'))?.ai?.[provider]?.apiKey?.trim() || null; } catch { return null; }
+}
+
 async function setupAi(config) {
   console.log('\nAI provider for "ask", the digest and the feature review (claude, claude-code, openai-compatible, command, none).');
   console.log('claude-code uses your Claude Code login (no API key); claude needs an Anthropic API key.');
@@ -444,13 +459,18 @@ async function setupAi(config) {
   const provider = await ask('Provider', config.ai.provider);
   config.ai.provider = provider;
   if (provider === 'claude') {
-    const existing = aiKey('claude');
-    const key = await askSecret(existing ? 'Anthropic API key (input hidden; Enter keeps the current one)' : 'Anthropic API key (input hidden; Enter skips: answers use LifeCycle\'s rules until you add one)');
+    // A key only in this Terminal's environment isn't seen by LifeCycle at login: offer to save it.
+    const fromEnv = (process.env.LIFECYCLE_AI_API_KEY || process.env.ANTHROPIC_API_KEY || '').trim();
+    const saved = savedAiKey('claude');
+    let key = null;
+    if (fromEnv && fromEnv !== saved && yes(await ask(`Use the ${process.env.LIFECYCLE_AI_API_KEY ? 'LIFECYCLE_AI_API_KEY' : 'ANTHROPIC_API_KEY'} set in this Terminal? LifeCycle at login doesn't see your Terminal, so it is saved for it (y/n)`, 'y'))) key = fromEnv;
+    else key = await askSecret(saved ? 'Anthropic API key (input hidden; Enter keeps the saved one)' : 'Anthropic API key (input hidden; Enter skips: answers use LifeCycle\'s rules until you add one)');
     if (key) saveCredentials({ ai: { claude: { apiKey: key } } });
     config.ai.model = (await ask('Model (Enter for the default)', config.ai.model || '')) || null;
   } else if (provider === 'claude-code') {
-    const bin = findCli('claude');
-    if (bin) console.log(`✓ Claude Code found (${bin}). It answers with your Claude login, with no tools or connectors.`);
+    const { cmd, bin } = claudeCommand(config.ai.command);
+    if (bin) config.ai.command = cmd;
+    if (bin) console.log(`✓ Claude Code found (${bin}); LifeCycle runs that one. It answers with your Claude login, with no tools or connectors.`);
     else console.log('! Claude Code was not found. Install it and sign in (run "claude" once in Terminal); until then answers use LifeCycle\'s rules.');
     config.ai.model = (await ask('Model (Enter for Claude Code\'s default)', config.ai.model || '')) || null;
   } else if (provider === 'openai-compatible') {
@@ -474,8 +494,9 @@ async function setupSlack(config) {
   console.log('team in the shared repo. One person is enough: everyone else sees the shared result.');
   cfg.enabled = yes(await ask('Read Slack release channels on this Mac? (y/n)', cfg.enabled ? 'y' : 'n'));
   if (cfg.enabled) {
-    const claude = findCli(path.basename(cfg.command?.[0] || 'claude'));
-    console.log(claude ? `   ✓ Claude Code found (${claude}).` : '   ! Claude Code wasn\'t found on this Mac. Install it and sign in to Slack in it (/mcp), or Slack can\'t be read.');
+    const { cmd, bin: claude } = claudeCommand(cfg.command);
+    if (claude) cfg.command = cmd;
+    console.log(claude ? `   ✓ Claude Code found (${claude}); LifeCycle runs that one.` : '   ! Claude Code wasn\'t found on this Mac. Install it and sign in to Slack in it (/mcp), or Slack can\'t be read.');
     console.log('   Name the channel in apps/<app>.yaml (release_channel: { slack: "#your-channel" }), then check what is read with:');
     console.log('     lifecycle slack-check');
   }
@@ -491,8 +512,9 @@ async function setupJira(config) {
   console.log('share what it finds with the team in the shared repo. One person is enough: everyone else sees the shared result.');
   cfg.enabled = yes(await ask('Read Jira tickets on this Mac? (y/n)', cfg.enabled ? 'y' : 'n'));
   if (cfg.enabled) {
-    const claude = findCli(path.basename(cfg.command?.[0] || 'claude'));
-    console.log(claude ? `   ✓ Claude Code found (${claude}).` : '   ! Claude Code wasn\'t found on this Mac. Install it, add Atlassian (claude mcp add --transport http atlassian https://mcp.atlassian.com/v2/mcp) and sign in with /mcp.');
+    const { cmd, bin: claude } = claudeCommand(cfg.command);
+    if (claude) cfg.command = cmd;
+    console.log(claude ? `   ✓ Claude Code found (${claude}); LifeCycle runs that one.` : '   ! Claude Code wasn\'t found on this Mac. Install it, add Atlassian (claude mcp add --transport http atlassian https://mcp.atlassian.com/v2/mcp) and sign in with /mcp.');
     const site = await ask('Your Jira site, if your account sees several (e.g. https://your-site.atlassian.net; Return to skip)', cfg.siteUrl || '');
     cfg.siteUrl = normalizeSiteUrl(site);
     if (site && !cfg.siteUrl) console.log(`   ! "${site}" isn't a Jira site address, so it was left out (any of your sites is used).`);

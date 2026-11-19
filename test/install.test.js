@@ -407,3 +407,67 @@ test('the lifecycle command run from a downloaded or cloned copy with no librari
   assert.match(r.stderr, /is a download or clone, not your installed LifeCycle, and has no libraries\.\n  What to do: Use the installed command: ~\/\.lifecycle\/bin\/lifecycle setup/, r.all);
   assert.doesNotMatch(r.all, /ERR_MODULE_NOT_FOUND/);
 });
+
+test('setup saves the full path of Claude Code found from the Terminal, and offers to save the Terminal\'s AI key', async () => {
+  const gh = await startFakeGithub();
+  gh.state.readable.add('acme/features');
+  const home = tmp('setup');
+  const bin = path.join(home, 'nvm-bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\n', { mode: 0o755 });
+  const env = { HOME: home, PATH: `${bin}:/usr/bin:/bin`, LIFECYCLE_HOME: path.join(home, '.lifecycle'), LIFECYCLE_GITHUB_API: gh.url };
+  try {
+    await run(process.execPath, ['src/cli/setup.js'], { env, input: `acme/features\n${gh.token}\n\n` });
+    const r = await run(process.execPath, ['src/cli/setup.js', '--extras'], { env, input: 'main\n-\nclaude-code\n\n@me\n' });
+    assert.match(r.stdout, /✓ Claude Code found \(.*nvm-bin\/claude\); LifeCycle runs that one/, r.all);
+    const config = JSON.parse(fs.readFileSync(path.join(home, '.lifecycle', 'config.json'), 'utf8'));
+    assert.deepEqual(config.ai.command, [path.join(bin, 'claude'), '-p']);
+    assert.equal(config.toolPath, env.PATH, "the Terminal's PATH is saved for LifeCycle at login");
+    // An Anthropic key only in this Terminal: offered, and saved on yes.
+    const k = await run(process.execPath, ['src/cli/setup.js', '--extras'], { env: { ...env, ANTHROPIC_API_KEY: 'sk-ant-from-shell' }, input: 'main\n-\nclaude\ny\n\n@me\n' });
+    assert.match(k.stdout, /Use the ANTHROPIC_API_KEY set in this Terminal\? LifeCycle at login doesn't see your Terminal/, k.all);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.lifecycle', 'credentials.json'), 'utf8')).ai.claude.apiKey, 'sk-ant-from-shell');
+  } finally {
+    await gh.close();
+  }
+});
+
+test('LifeCycle finds a tool installed under nvm (newest version first) even with the short PATH it has at login', async () => {
+  const home = tmp('nvm');
+  for (const v of ['v20.11.0', 'v22.3.0', 'v9.0.0']) {
+    fs.mkdirSync(path.join(home, '.nvm', 'versions', 'node', v, 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.nvm', 'versions', 'node', v, 'bin', 'lc-test-tool'), '#!/bin/sh\n', { mode: 0o755 });
+  }
+  const script = "const m = await import('./src/config.js'); process.stdout.write(String(m.findCli('lc-test-tool')))";
+  const r = await run(process.execPath, ['--input-type=module', '-e', script], { env: { HOME: home, PATH: '/usr/bin:/bin' } });
+  assert.equal(r.stdout, path.join(home, '.nvm', 'versions', 'node', 'v22.3.0', 'bin', 'lc-test-tool'), r.all);
+});
+
+test('at login LifeCycle adds the Terminal folders saved by setup after its own, so a sign-in helper Claude Code runs is found', async () => {
+  const { withToolPath } = await import('../src/config.js');
+  assert.equal(withToolPath('/a/node/bin:/usr/bin:/bin', '/Users/x/.nvm/bin:/usr/bin:/opt/corp/auth/bin:relative/bin:/opt/corp/auth/bin'),
+    '/a/node/bin:/usr/bin:/bin:/Users/x/.nvm/bin:/opt/corp/auth/bin');
+  assert.equal(withToolPath('/usr/bin', null), '/usr/bin');
+  // End to end: a "claude" that needs a helper only on the Terminal's PATH.
+  const dir = tmp('helper');
+  fs.mkdirSync(path.join(dir, 'auth'));
+  fs.writeFileSync(path.join(dir, 'auth', 'corp-auth'), '#!/bin/sh\necho signed-in\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, 'claude'), '#!/bin/sh\ncorp-auth >/dev/null || exit 3\necho \'{"ok": true}\'\n', { mode: 0o755 });
+  const script = `const { runClaude } = await import('./src/claude-run.js'); const { withToolPath } = await import('./src/config.js');
+    process.env.PATH = withToolPath(process.env.PATH, ${JSON.stringify(path.join(dir, 'auth'))});
+    process.stdout.write(await runClaude({ command: [${JSON.stringify(path.join(dir, 'claude'))}, '-p'], timeoutMs: 10000 }, 'hi', { what: 'x', noTools: true }));`;
+  const r = await run(process.execPath, ['--input-type=module', '-e', script], { env: { HOME: dir, PATH: '/usr/bin:/bin', LIFECYCLE_HOME: path.join(dir, '.lifecycle') } });
+  assert.match(r.stdout, /"ok": true/, r.all);
+});
+
+test('a saved Claude Code path that no longer exists falls back to the same name in the usual places', async () => {
+  const home = tmp('moved');
+  const bin = path.join(home, '.nvm', 'versions', 'node', 'v24.1.0', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\necho moved-ok\n', { mode: 0o755 });
+  const gone = path.join(home, '.nvm', 'versions', 'node', 'v22.0.0', 'bin', 'claude');
+  const script = `const { runClaude } = await import('./src/claude-run.js');
+    process.stdout.write(await runClaude({ command: [${JSON.stringify(gone)}, '-p'], timeoutMs: 10000 }, 'hi', { what: 'x', noTools: true }));`;
+  const r = await run(process.execPath, ['--input-type=module', '-e', script], { env: { HOME: home, PATH: '/usr/bin:/bin', LIFECYCLE_HOME: path.join(home, '.lifecycle') } });
+  assert.equal(r.stdout.trim(), 'moved-ok', r.all);
+});
