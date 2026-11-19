@@ -34,13 +34,17 @@ const fromDoc = (doc) => {
 };
 
 // Applies the draft to a YAML document (new or the current file). Empty optional fields are removed.
-function applyDraft(doc, d) {
-  const set = (key, value) => { if (value) doc.set(key, value); else if (doc.has(key)) doc.delete(key); };
+// only: the form fields to write (an edit writes just what changed, so untouched parts of a
+// hand-written file keep their layout and comments); null writes them all.
+function applyDraft(doc, d, only = null) {
+  const want = (k) => !only || only.includes(k);
+  const set = (key, value) => { if (!want(key)) return; if (value) doc.set(key, value); else if (doc.has(key)) doc.delete(key); };
   set('name', d.name);
   set('owner', d.owner);
   set('repo', d.repo);
   set('release_tag', d.release_tag);
   const platform = (key, store, id) => {
+    if (!want(`${key}_store_id`)) return;
     if (!id) { if (doc.hasIn(['platforms', key])) doc.deleteIn(['platforms', key]); return; }
     const node = doc.createNode({ store, store_id: id });
     node.flow = true;
@@ -49,8 +53,9 @@ function applyDraft(doc, d) {
   if (!doc.has('platforms')) doc.set('platforms', doc.createNode({}));
   platform('ios', 'app_store', d.ios_store_id);
   platform('android', 'google_play', d.android_store_id);
+  if (!want('slack') && !want('hint')) return;
   if (d.slack) {
-    doc.setIn(['release_channel', 'slack'], d.slack);
+    if (want('slack')) doc.setIn(['release_channel', 'slack'], d.slack);
     if (d.hint) doc.setIn(['release_channel', 'hint'], d.hint);
     else if (doc.hasIn(['release_channel', 'hint'])) doc.deleteIn(['release_channel', 'hint']);
   } else if (doc.has('release_channel')) doc.delete('release_channel');
@@ -129,7 +134,7 @@ export async function updateAppDefinition({ id, draft, base = null, apps, io, wh
     }
     const changed = FIELDS.filter((k) => d[k] !== now[k]);
     if (!changed.length) return { outcome: 'unchanged', id, message: 'Nothing changed.' };
-    applyDraft(doc, d);
+    applyDraft(doc, d, changed);
     const text = doc.toString({ lineWidth: 0 });
     const checked = validateApp(a.file, text);
     if (checked.errors.length) return { outcome: 'invalid', errors: formErrors(checked.errors), message: "Can't save yet: fix the fields marked." };

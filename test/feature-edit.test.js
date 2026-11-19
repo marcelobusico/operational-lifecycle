@@ -385,3 +385,13 @@ test('apps: created from LifeCycle with stores and a Slack channel, edited keepi
   assert.equal(del.status, 200, del.body.message);
   assert.equal(repoFile('apps/reader.yaml'), undefined);
 });
+
+test('editing one field of a hand-written app leaves the rest of the file as it was written', async () => {
+  const text = 'id: shelf-app\nname: Shelf\nrepo: team/shelf\nplatforms:\n  # The store listing is managed by the growth team.\n  ios:\n    store: app_store\n    store_id: "987654321"\n';
+  gh.state.files.get(DATA).set('apps/shelf-app.yaml', text);
+  await ana.get('/api/roadmap');
+  const base = { name: 'Shelf', owner: '', repo: 'team/shelf', release_tag: '', ios_store_id: '987654321', android_store_id: '', slack: '', hint: '' };
+  const r = await ana.put('/api/apps/shelf-app', { draft: { ...base, slack: '#shelf-releases' }, base });
+  assert.equal(r.status, 200, r.body.message);
+  assert.equal(repoFile('apps/shelf-app.yaml'), `${text}release_channel:\n  slack: "#shelf-releases"\n`);
+});
