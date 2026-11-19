@@ -328,7 +328,8 @@ two ways to change them, and both go through the same validation and AI product 
 **From LifeCycle** (product managers and anyone with write access to LifeCycle-Data): on a feature
 page press **Edit feature**, or **New feature** on the *Roadmap* or on a project's page (which puts
 it in that project). **New project** (under the project list in the sidebar) creates `projects/<id>.yaml`
-the same way, and **Delete project** on its page removes it once no feature is in it. You can change the
+the same way; on its page, **Edit project** renames it (or changes its owner and description; the id stays) and
+**Delete project** removes it once no feature is in it. You can change the
 name, owner, description, project, target date, steps (each step's owner, team and "done when", plus adding, removing
 and reordering steps), dependencies, services and flags.
 

@@ -114,6 +114,7 @@ function parseRoute() {
   if ((m = h.match(/^#\/feature\/(.+)$/))) return { route: 'feature', id: decodeURIComponent(m[1]) };
   if ((m = h.match(/^#\/project\/([^/]+)(?:\/(map))?$/))) return { route: 'project', id: decodeURIComponent(m[1]), tab: m[2] || 'features' };
   if (h === '#/projects/new') return { route: 'project-new' };
+  if ((m = h.match(/^#\/project\/([^/]+)\/edit$/))) return { route: 'project-new', editId: decodeURIComponent(m[1]) };
   if (h === '#/roadmap') return { route: 'roadmap' };
   if (h === '#/map' || h.startsWith('#/map?')) return { route: 'map' };
   // The chat is a side panel now: an old Ask link opens it over Home.
@@ -149,7 +150,7 @@ document.addEventListener('click', (e) => {
 
 function renderChrome(r) {
   rememberProject(r);
-  const navRoute = r.route === 'project' || r.route === 'feature' ? 'roadmap' : r.route === 'feature-edit' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route;
+  const navRoute = r.route === 'project' || r.route === 'feature' || (r.route === 'project-new' && r.editId) ? 'roadmap' : r.route === 'feature-edit' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route;
   if (r.route === 'alerts') alertsAcknowledged = true;
   const unseenCount = alertView ? alertView.alerts.filter((a) => !isSeen(a)).length : 0;
   const nb = $('#alert-count');
@@ -176,7 +177,7 @@ function renderChrome(r) {
   const sideArch = sideAll.filter((p) => isArchived(p.project.id));
   $('#side-features').innerHTML = sideAll.filter((p) => !isArchived(p.project.id)).map(sideItem).join('')
     + (sideArch.length ? `<li class="side-arch"><details${sideArch.some((p) => pid(p.project.id) === active) ? ' open' : ''}><summary>Archived <span class="cnt">${sideArch.length}</span></summary><ul>${sideArch.map(sideItem).join('')}</ul></details></li>` : '')
-    + '<li class="side-new"><a href="#/projects/new" data-route="project-new"' + (r.route === 'project-new' ? ' aria-current="page"' : '') + '><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg><span class="t">New project</span></a></li>';
+    + '<li class="side-new"><a href="#/projects/new" data-route="project-new"' + (r.route === 'project-new' && !r.editId ? ' aria-current="page"' : '') + '><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11"/></svg><span class="t">New project</span></a></li>';
 
   const sep = '<span aria-hidden="true">/</span>';
   const crumbProject = (id) => `<a href="${projHref(id)}">${esc(projectById(pid(id))?.project.name || 'No project')}</a>`;
@@ -189,6 +190,8 @@ function renderChrome(r) {
     const f = snapshot?.features.find((x) => x.feature.id === r.id);
     crumbs = r.mode === 'create' ? `<a href="#/roadmap">Roadmap</a>${sep}${r.project ? `${crumbProject(r.project)}${sep}` : ''}<span class="cur">New feature</span>`
       : `<a href="#/roadmap">Roadmap</a>${sep}<a href="${href(r.id)}">${esc(f?.feature.name || r.id)}</a>${sep}<span class="cur">Edit</span>`;
+  } else if (r.route === 'project-new' && r.editId) {
+    crumbs = `<a href="#/roadmap">Roadmap</a>${sep}${crumbProject(r.editId)}${sep}<span class="cur">Edit</span>`;
   } else if (r.route === 'project') {
     crumbs = `<a href="#/roadmap">Roadmap</a>${sep}<span class="cur">${esc(projectById(r.id)?.project.name || r.id)}</span>`;
   } else {
@@ -312,7 +315,7 @@ function render() {
     teams: () => renderTeamsFlow(),
     team: () => renderTeam(r.id),
     'team-edit': () => renderTeamEdit(r.mode, r.id),
-    'project-new': () => renderProjectNew(),
+    'project-new': () => renderProjectNew(r.editId || null),
     change: () => renderChangeForm(r.mode, r.id || null),
     'feature-edit': () => renderFeatureEdit(r.mode, r.id, r.project),
     home: () => renderHome(),
@@ -365,7 +368,7 @@ function renderProject(id, tab) {
       ? `${mapSvg(p.features, null, { external: true })}${legend(true)}`
       : `${featureList(fs)}${outside ? `<div class="section"><h2>Outside this project</h2><div class="cols2">${outside}</div></div>` : ''}`;
   return `<p class="kicker">Project</p>
-    <div class="fhead"><h1>${esc(p.project.name)}</h1>${badge(p.state)}${archiveButton(p, { suggest: allDone(p) })}${editAccess?.can_edit && p.project.id ? `<button type="button" class="btn small danger" data-project-delete="${esc(p.project.id)}">Delete project</button>${newFeatureButton(p.project.id)}` : ''}</div>
+    <div class="fhead"><h1>${esc(p.project.name)}</h1>${badge(p.state)}${archiveButton(p, { suggest: allDone(p) })}${editAccess?.can_edit && p.project.id ? `<a class="btn small" href="#/project/${encodeURIComponent(p.project.id)}/edit">Edit project</a><button type="button" class="btn small danger" data-project-delete="${esc(p.project.id)}">Delete project</button>${newFeatureButton(p.project.id)}` : ''}</div>
     ${isArchived(p.project.id) ? '<p class="arch-note">Archived for you: it no longer shows in your Roadmap or Home. Everything here is still live, and you can ask about it in Ask.</p>' : ''}
     ${p.project.description ? `<p class="lede">${esc(p.project.description)}</p>` : ''}
     <div class="facts">
@@ -426,11 +429,19 @@ function featureList(fs, { showProject = false } = {}) {
 
 // ---------- new project: commits projects/<id>.yaml under the person's GitHub user ----------
 
-let projectForm = null; // { draft: { name, id, owner, description }, idTouched, errors, result, busy }
+let projectForm = null; // { editId, draft: { name, id, owner, description }, base, idTouched, errors, result, busy }
 
-function renderProjectNew() {
-  if (!projectForm) projectForm = { draft: { name: '', id: '', owner: '', description: '' }, idTouched: false, errors: [], result: null, busy: false };
+// editId: edit that project (name, owner, description; the id stays) instead of creating one.
+function renderProjectNew(editId = null) {
+  if (projectForm && projectForm.editId !== editId) projectForm = null;
+  if (!projectForm) {
+    const p = editId ? projectById(editId) : null;
+    if (editId && !p) return `<p class="kicker">Project</p><h1 class="mono">${esc(editId)}</h1><div class="card empty section"><strong>Not defined</strong>No project with this id exists in the shared repo.</div>`;
+    const draft = p ? { name: p.project.name || '', id: p.project.id, owner: p.project.owner || '', description: p.project.description || '' } : { name: '', id: '', owner: '', description: '' };
+    projectForm = { editId, draft, base: p ? { ...draft } : null, idTouched: Boolean(p), errors: [], result: null, busy: false };
+  }
   const f = projectForm, d = f.draft;
+  if (editId) return renderProjectEdit(f, d);
   const target = snapshot.definitions.source.startsWith('local:') ? 'the local data folder' : `the shared repo (${esc(snapshot.definitions.source.replace(/^github:/, '').replace(/@.*$/, ''))})`;
   const err = (field) => (f.errors || []).filter((e) => e.field === field).map((e) => `<p class="ferr" role="alert">${esc(e.message)}</p>`).join('');
   const bad = (field) => ((f.errors || []).some((e) => e.field === field) ? ' aria-invalid="true"' : '');
@@ -450,10 +461,31 @@ function renderProjectNew() {
     </div></form>`;
 }
 
+function renderProjectEdit(f, d) {
+  const err = (field) => (f.errors || []).filter((e) => e.field === field).map((e) => `<p class="ferr" role="alert">${esc(e.message)}</p>`).join('');
+  const bad = (field) => ((f.errors || []).some((e) => e.field === field) ? ' aria-invalid="true"' : '');
+  const local = snapshot.definitions.source.startsWith('local:');
+  const back = projHref(f.editId);
+  if (editAccess && !editAccess.can_edit) {
+    return `<p class="kicker">Edit project</p><h1>${esc(f.base.name)}</h1>
+      <div class="banner st-unavailable section" role="status"><span class="ico">!</span><div><b>You can't edit projects.</b> ${esc(editAccess.reason || '')}</div></div>`;
+  }
+  return `<p class="kicker">Edit project</p><h1>${esc(f.base.name)}</h1>
+    <p class="lede">Saving ${local ? 'saves' : 'commits'} <code>${esc(projectById(f.editId)?.project.file || `projects/${f.editId}.yaml`)}</code>${local ? '' : ' as your GitHub user'}. The id (<code>${esc(f.editId)}</code>) stays the same, so its features stay in it.</p>
+    ${f.result ? `<div class="banner st-blocked section" role="alert"><span class="ico">!</span><div>${esc(f.result.message || '')}</div></div>` : ''}
+    <form id="projectform" class="cform section" novalidate><div class="card fbox">
+      <label>Name <span class="req">required</span><input name="name" value="${esc(d.name)}" autocomplete="off"${bad('name')}></label>${err('name')}
+      <label>Owner <span class="muted small">optional</span><input name="owner" value="${esc(d.owner)}" placeholder="Catalog team or @handle"${bad('owner')}></label>${err('owner')}
+      <label>Description <span class="muted small">optional</span><textarea name="description" rows="2"${bad('description')}>${esc(d.description)}</textarea></label>${err('description')}
+      <div class="factions"><button class="btn primary" type="submit"${f.busy ? ' disabled' : ''}>${f.busy ? 'Saving…' : 'Save'}</button><a class="btn" href="${back}">Cancel</a></div>
+    </div></form>`;
+}
+
 function wireProjectNew(root) {
   const form = root.querySelector('#projectform');
   if (!form) return;
   const f = projectForm;
+  if (f.editId) return wireProjectEdit(form, f);
   const sync = () => {
     const v = (n) => form.querySelector(`[name="${n}"]`).value;
     f.draft = { name: v('name'), id: v('id'), owner: v('owner'), description: v('description') };
@@ -475,6 +507,30 @@ function wireProjectNew(root) {
       await load();
       toast(r.message);
       location.hash = projHref(r.id);
+      return;
+    }
+    f.errors = r.errors || [];
+    f.result = r;
+    render();
+    $('#main [aria-invalid="true"]')?.focus();
+  });
+}
+
+function wireProjectEdit(form, f) {
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const v = (n) => form.querySelector(`[name="${n}"]`).value;
+    f.draft = { ...f.draft, name: v('name'), owner: v('owner'), description: v('description') };
+    f.busy = true; f.errors = []; f.result = null;
+    render();
+    const r = await sendFeature(`/api/projects/${encodeURIComponent(f.editId)}`, 'PUT', { draft: f.draft, base: f.base });
+    f.busy = false;
+    if (r.outcome === 'published' || r.outcome === 'unchanged') {
+      const id = f.editId;
+      projectForm = null;
+      if (r.outcome === 'published') await load();
+      toast(r.message);
+      location.hash = projHref(id);
       return;
     }
     f.errors = r.errors || [];

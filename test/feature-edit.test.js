@@ -322,3 +322,22 @@ test('deleting a project: refused while it has features (named), read-only peopl
   assert.match(c.message, /^Delete project reading \(by @ana from LifeCycle\)$/);
   assert.ok(!(await bo.get('/api/roadmap')).projects.some((p) => p.project.id === 'reading'));
 });
+
+test('editing a project renames it (same id and file, comments kept); a stale form or a read-only person is refused', async () => {
+  gh.state.files.get(DATA).set('projects/shelf.yaml', '# Shelf work, owned by catalog.\nid: shelf\nname: Shelf\nowner: Catalog team\n');
+  await ana.get('/api/roadmap');
+  const base = { name: 'Shelf', owner: 'Catalog team', description: '' };
+  const r = await ana.put('/api/projects/shelf', { draft: { name: 'Bookshelf', owner: 'Catalog team', description: 'Saved books' }, base });
+  assert.equal(r.status, 200, r.body.message);
+  assert.deepEqual(r.body.changed, ['name', 'description']);
+  assert.equal(repoFile('projects/shelf.yaml'), '# Shelf work, owned by catalog.\nid: shelf\nname: Bookshelf\nowner: Catalog team\ndescription: Saved books\n');
+  assert.match(commitsFor('projects/shelf.yaml').at(-1).message, /^Edit project shelf: name, description \(by @ana from LifeCycle\)$/);
+  assert.equal((await bo.get('/api/roadmap')).projects.find((p) => p.project.id === 'shelf').project.name, 'Bookshelf');
+  // bo still has the old name in his form: refused, ana's change is kept.
+  const stale = await bo.put('/api/projects/shelf', { draft: { name: 'Shelves', owner: 'Catalog team', description: '' }, base });
+  assert.equal(stale.status, 409);
+  assert.match(stale.body.message, /someone changed Bookshelf after you opened it/);
+  assert.match(repoFile('projects/shelf.yaml'), /name: Bookshelf/);
+  assert.equal((await ana.put('/api/projects/shelf', { draft: { name: '', owner: '', description: '' } })).status, 400);
+  assert.equal((await cy.put('/api/projects/shelf', { draft: { name: 'X' } })).status, 403);
+});
