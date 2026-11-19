@@ -248,6 +248,10 @@ without tokens. Formats, registered changes (`changes/*.yaml` in LifeCycle-Data)
     hint: "iOS messages mention the App Store"     # optional
   ```
 
+  Create and edit apps (stores, repo, Slack channel and hint) on the **Apps** page in the sidebar:
+  each save is a commit of `apps/<id>.yaml` as you, keeping comments; an app is deleted only once no
+  feature lists it.
+
   It is read through Claude Code with Slack connected (the Slack plugin), on one person's machine
   (`lifecycle setup --extras` → Slack). Claude only extracts; LifeCycle keeps a version or % only
   when it is written in the cited message. `lifecycle slack-check [--days 14] [--app <id>]` shows

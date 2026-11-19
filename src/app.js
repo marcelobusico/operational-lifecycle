@@ -210,7 +210,8 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
       features: statuses,
       services: services.map((s) => ({ id: s.id, name: s.name, owner: s.owner, repo: s.repo })),
       // Mobile apps (apps/*.yaml): never their store credentials, only where they're published.
-      apps: apps.map((a) => ({ id: a.id, name: a.name, owner: a.owner, repo: a.repo, platforms: a.platforms })),
+      apps: apps.map((a) => ({ id: a.id, name: a.name, owner: a.owner, repo: a.repo, platforms: a.platforms, release_tag: a.releaseTag,
+        release_channel: a.releaseChannel, file: a.file, features: features.filter((f) => (f.apps || []).some((x) => x.id === a.id)).map((f) => f.id) })),
       changes: changesWithLinks,
       alerts: allAlerts,
       alerts_source: alerts.meta,
