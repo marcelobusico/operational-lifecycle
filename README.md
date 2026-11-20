@@ -9,7 +9,7 @@ blocking it. LifeCycle runs on your own machine and opens in your browser. There
 - **Feature definitions** (owner, steps, dependencies) come from a shared GitHub repo your team
   creates (called *LifeCycle-Data* in these docs; any name works). See
   [Create your shared repo](#create-your-shared-repo-lifecycle-data).
-- **Step states** are read live from GitHub (PRs and issues) when you press **Refresh data**, with
+- **Step states** are read live from GitHub (PRs and issues) when you press **Refresh Data**, with
   **your own** credentials (nothing is read on a timer). Nobody types a status, so it can't go stale, and two people with the same
   access see the same thing.
 
@@ -152,10 +152,12 @@ npm start
 
 Open **http://lifecycle.localhost:4317** (`*.localhost` always means your own Mac; http://localhost:4317 works too). Nothing is read on a timer, so LifeCycle doesn't keep calling services or spending Claude tokens:
 
-- **Refresh** (or reloading the page) reads the shared repo again: features, projects, teams, apps
+- **Refresh View** (or reloading the page) re-reads the shared repo only: features, projects, teams, apps
   and registered changes. The status from the sources stays as it was last read.
-- **Refresh data** reads every source live: pull requests and issues, deploys, flags, app stores,
+- **Refresh Data** reads every source live: pull requests and issues, deploys, flags, app stores,
   and Slack and Jira through Claude. The sidebar shows when that was (**Data read 12 min ago**).
+  Everyone can use it, including people with read-only access to LifeCycle-Data; only people
+  with write access also save the flag, store and Jira results to the shared repo for teammates.
 
 When LifeCycle starts it shows the data it read last; the very first start on a machine reads
 every source once.
@@ -311,7 +313,7 @@ Which platform your LifeCycle reads, strongest first:
    platform question follows the team, including later changes to `team.yaml`.
 
 A local config that only pointed at Flagsmith because nothing was ever chosen (older installs saved
-`flagPlatform: "flagsmith"` without a project) moves to the team's platform on the next Refresh.
+`flagPlatform: "flagsmith"` without a project) moves to the team's platform on the next refresh.
 Home then shows a one-time notice, **"Feature flags are now read from Statsig"**, until you click
 **Got it**.
 
@@ -328,7 +330,7 @@ the configured platform (never the other one), says what's wrong and gives the f
 | **No Statsig key is set up on this machine** | Create a Console API key (`console-…`) at https://console.statsig.com/api_keys, then `npm run setup -- --extras` and paste it. |
 | **Wrong kind of Statsig key** | The saved key is a Server Secret (`secret-…`) or Client SDK (`client-…`) key. Create a **Console** API key as above and run setup again. |
 | **Statsig refused your key** | The Console key was revoked, expired or is for another project. Create a new one and run setup again. |
-| **Statsig can't be reached** (with the last successful read time) | Nothing to change: check your connection; LifeCycle tries again on the next Refresh. |
+| **Statsig can't be reached** (with the last successful read time) | Nothing to change: check your connection; LifeCycle tries again on the next Refresh Data. |
 | **No Flagsmith project is chosen** / **Flagsmith environment not found** (Flagsmith teams only) | `npm run setup -- --extras` and pick the project or fix the QA/production environment names. |
 
 ### GitHub access problems on a new Mac

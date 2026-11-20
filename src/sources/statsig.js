@@ -72,7 +72,7 @@ export function createStatsigConnection({ mcpUrl, apiKey, enabled = true, timeou
       const code = err.message.match(/answered HTTP (\d+)/)?.[1];
       const detail = /could not be reached/i.test(err.message) ? 'no connection, or Statsig is down'
         : code ? `Statsig is having trouble: it answered with an error, HTTP ${code}` : err.message;
-      throw failure('unreachable', 'unreachable', `${STATSIG_NAME} could not be reached right now (${detail}). LifeCycle tries again on the next Refresh; check your internet connection if it keeps happening.`);
+      throw failure('unreachable', 'unreachable', `${STATSIG_NAME} could not be reached right now (${detail}). LifeCycle tries again on the next Refresh Data; check your internet connection if it keeps happening.`);
     }
   }
 

@@ -129,7 +129,7 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
         await readBody(req);
         return send(res, markNoticeSeen(nm[1]) ? 200 : 404, { id: nm[1], seen: true });
       }
-      // "Refresh data": read every source live (PRs, deploys, flags, stores, Slack and Jira through
+      // "Refresh Data": read every source live (PRs, deploys, flags, stores, Slack and Jira through
       // Claude). The only way the server reads them besides its first refresh: nothing runs on a timer.
       if (req.method === 'POST' && url.pathname === '/api/refresh-data') {
         await readBody(req);

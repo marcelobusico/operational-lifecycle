@@ -38,7 +38,7 @@ const failingFile = () => path.join(paths.cacheDir(), 'failing-since.json');
 // What the last live read said about each item, so a refresh that doesn't read the sources
 // (live: false, src/app.js) shows that instead of calling GitHub or Claude again.
 const resultsFile = () => path.join(paths.cacheDir(), 'evidence-results.json');
-export const NOT_READ_YET = 'Not read on this machine yet. Press Refresh data to read it.';
+export const NOT_READ_YET = 'Not read on this machine yet. Press Refresh Data to read it.';
 const evidenceKey = evidenceId;
 
 // Builds a reader for one refresh. read() never throws: a failed read comes back as
@@ -46,7 +46,7 @@ const evidenceKey = evidenceId;
 // jiraSnapshots: parsed jira-snapshots/. jiraRun: replaces the Claude Code call for Jira (tests).
 // live: false reads (almost) nothing: each item is what the last live read said (a newer Jira team
 // snapshot, which comes with the shared repo, wins). A GitHub PR or issue never read before (just
-// linked to a step) is read once: one API call, no Claude. A new Jira ticket waits for Refresh data.
+// linked to a step) is read once: one API call, no Claude. A new Jira ticket waits for Refresh Data.
 export function createEvidenceReader({ config, tokens, fetchImpl, jiraSnapshots = [], jiraRun, live = true }) {
   const adapters = {};
   for (const [name, def] of Object.entries(SOURCES)) {

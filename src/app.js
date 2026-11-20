@@ -1,8 +1,8 @@
 // One refresh = read the definitions, then compute statuses from every step's evidence.
 // Two kinds (nothing runs on a timer; a person asks for each):
-// - refresh() reads only the shared repo and reuses what the sources said at the last live read
+// - refresh() ("Refresh View") reads only the shared repo and reuses what the sources said at the last live read
 //   (saved in the cache folder), so it never calls GitHub PRs, deploys, flags, stores or Claude.
-// - refresh({ live: true }) ("Refresh data") reads every source live and saves what they said.
+// - refresh({ live: true }) ("Refresh Data") reads every source live and saves what they said.
 // The very first refresh on a machine (nothing saved yet) reads live.
 import fs from 'node:fs';
 import path from 'node:path';
