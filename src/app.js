@@ -281,12 +281,9 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
     return lastDefs;
   }
 
-  // The definitions as last read, without starting a read: the running refresh's when one is under way,
-  // else null (nothing read yet). For checks that can say "not checked" instead of reading everything.
-  async function definitionsLast() {
-    if (!lastDefs && inFlight) await inFlight.catch(() => {});
-    return lastDefs;
-  }
+  // The definitions as last read, without starting or waiting for a read (null: nothing read yet). For
+  // checks that can say "not checked" instead of waiting for every source to be read.
+  const definitionsLast = () => lastDefs;
 
   // The latest refresh's snapshot (or a new refresh if there is none yet).
   const latest = async () => lastSnap || refresh();

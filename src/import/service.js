@@ -17,6 +17,14 @@ export const NO_AI_MESSAGE = 'Analysis needs an AI provider, and none is set up 
 const UNKNOWN_AI = (name) => `Analysis needs an AI provider, and the one set up on this machine ("${name}") isn't one LifeCycle knows. `
   + 'Set ai.provider in ~/.lifecycle/config.json to claude, claude-code, openai-compatible or command, or run `lifecycle setup --extras`. Nothing was read and nothing is proposed.';
 const KEEP_JOBS = 5;
+const GITHUB_AT_ONCE = 3;
+
+// fn on every item, at most `limit` running at a time.
+export async function eachLimited(items, limit, fn) {
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const i = next; next += 1; await fn(items[i]); } };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
 
 // providerNow(): the AI provider as configured right now (src/ask/service.js currentProvider).
 // configNow(): the saved config as it is now, so changed caps or Jira site apply to the next analysis.
@@ -49,7 +57,9 @@ export function createImportService({ app, providerNow, configNow = () => app.co
     await Promise.all([
       jiraEntries.length ? readJiraSources({ entries: jiraEntries, cfg: jiraCfg, caps, ...(jiraRun ? { run: jiraRun } : {}) })
         .then((results) => { for (const e of jiraEntries) set(e, results.get(e.key)); }) : null,
-      ...readable.filter((e) => e.kind.startsWith('github_')).map((e) => readGithubSource({ entry: e, get: getGithub, caps }).then((r) => set(e, r))),
+      // A few GitHub links at a time: a repository is 15 or more requests, and hundreds at once trip
+      // GitHub's secondary rate limit.
+      eachLimited(readable.filter((e) => e.kind.startsWith('github_')), GITHUB_AT_ONCE, (e) => readGithubSource({ entry: e, get: getGithub, caps }).then((r) => set(e, r))),
     ]);
     const read = job.sources.filter((s) => s.status === 'read');
     if (!read.length) {
@@ -59,9 +69,9 @@ export function createImportService({ app, providerNow, configNow = () => app.co
       return;
     }
     job.phase = 'analyzing';
-    // Duplicates are checked against what was last read from the shared repo; an analysis never starts
+    // Duplicates are checked against what was last read from the shared repo; an analysis never starts or waits for
     // a full read of every source just for this. If nothing was read yet, the proposal says so.
-    const defs = await app.definitionsLast().catch(() => null);
+    const defs = app.definitionsLast();
     const features = (defs?.featureDefs || []).map((f) => ({ id: f.id, name: f.name }));
     const projects = (defs?.projectDefs || []).map((p) => ({ id: p.id, name: p.name }));
     let result;
@@ -70,7 +80,9 @@ export function createImportService({ app, providerNow, configNow = () => app.co
     } catch (err) {
       job.state = 'failed';
       job.phase = 'failed';
-      job.message = `The AI provider (${provider.name}) couldn't analyze the sources: ${redact(err.message)}. Nothing is proposed; try Analyze again.`;
+      job.message = err?.tooLong
+        ? `The AI provider (${provider.name}) couldn't finish the proposal: ${err.message}. Nothing is proposed.`
+        : `The AI provider (${provider.name}) couldn't analyze the sources: ${redact(err.message)}. Nothing is proposed; try Analyze again.`;
       return;
     }
     for (const [id, n] of result.cut) {

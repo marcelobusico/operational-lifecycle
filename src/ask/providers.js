@@ -104,7 +104,25 @@ export const IMPORT_SCHEMA = {
   additionalProperties: false,
 };
 // An analysis reads many sources and writes a long answer: more room and time than a chat answer.
-const ANALYZE = { maxTokens: 16000, minTimeoutMs: 180000 };
+const ANALYZE = { maxTokens: 20000, minTimeoutMs: 180000 };
+
+// The answer hit the provider's length limit, so its JSON is cut off: say so, with what to do.
+export class AnswerTooLongError extends Error {
+  constructor() {
+    super('the answer was cut off at the AI provider\'s length limit: these sources hold more than one proposal can. Paste fewer links (e.g. one epic or repository at a time) and Analyze again');
+    this.tooLong = true;
+  }
+}
+// A JSON answer that ends early is almost always one cut off at the length limit (providers that
+// don't say why they stopped: command, Claude Code).
+function parseAnswer(text) {
+  try { return parseJson(text); } catch (err) {
+    const s = String(text || '');
+    if (s.includes('{') && /Unexpected end|Unterminated|Expected .* after/i.test(err.message)) throw new AnswerTooLongError();
+    if (s.includes('{') && s.lastIndexOf('}') < s.indexOf('{')) throw new AnswerTooLongError();
+    throw err;
+  }
+}
 
 function interpretPrompt({ question, features }) {
   return `Defined features (id: name):\n${features.map((f) => `${f.id}: ${f.name}`).join('\n')}\n\nQuestion: ${question}`;
@@ -152,6 +170,7 @@ function claudeProvider(config) {
       messages: [{ role: 'user', content: user }],
     }, timeoutMs ? { timeout: timeoutMs } : undefined);
     if (res.stop_reason === 'refusal') throw new Error('Claude declined to answer');
+    if (res.stop_reason === 'max_tokens') throw new AnswerTooLongError();
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     return parseJson(text);
   }
@@ -173,19 +192,20 @@ function openAiCompatibleProvider(config, { fetchImpl = fetch } = {}) {
   const model = config.ai.model;
   const key = aiKey('openai-compatible');
   registerSecret(key);
-  async function call(system, user, { timeoutMs = config.ai.timeoutMs } = {}) {
+  async function call(system, user, { timeoutMs = config.ai.timeoutMs, maxTokens = null } = {}) {
     if (!config.ai.apiUrl) throw new Error('ai.apiUrl is not set for the openai-compatible provider');
     if (!model) throw new Error('ai.model is not set for the openai-compatible provider');
     const res = await fetchImpl(`${config.ai.apiUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: JSON.stringify({ model, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+      body: JSON.stringify({ model, response_format: { type: 'json_object' }, ...(maxTokens ? { max_tokens: maxTokens } : {}), messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 401) throw new Error(KEY_REJECTED('The AI provider'));
     if (!res.ok) throw new Error(`the provider answered HTTP ${res.status}`);
     const body = await res.json();
-    return parseJson(body.choices?.[0]?.message?.content);
+    if (body.choices?.[0]?.finish_reason === 'length') throw new AnswerTooLongError();
+    return parseAnswer(body.choices?.[0]?.message?.content);
   }
   return {
     name: 'openai-compatible',
@@ -193,7 +213,7 @@ function openAiCompatibleProvider(config, { fetchImpl = fetch } = {}) {
     interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
     lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
     review: ({ system, prompt }) => call(system, prompt),
-    analyze: ({ system, prompt }) => call(system, prompt, { timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs) }),
+    analyze: ({ system, prompt }) => call(system, prompt, { timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs), maxTokens: ANALYZE.maxTokens }),
   };
 }
 
@@ -210,7 +230,7 @@ function commandProvider(config) {
       child.on('close', (code) => {
         clearTimeout(timer);
         if (code !== 0) return reject(new Error(`${cmd[0]} exited with code ${code}`));
-        try { resolve(parseJson(out)); } catch (err) { reject(err); }
+        try { resolve(parseAnswer(out)); } catch (err) { reject(err); }
       });
       child.stdin.end(`${system}\n\n${user}\n`);
     });
@@ -230,7 +250,7 @@ function commandProvider(config) {
 function claudeCodeProvider(config, { run = runClaude } = {}) {
   const cfg = { command: Array.isArray(config.ai.command) && config.ai.command.length ? config.ai.command : ['claude', '-p'],
     timeoutMs: Math.max(config.ai.timeoutMs || 0, 120000) };
-  const call = async (system, user, c = cfg) => parseJson(await run(c, `${system}\n\n${user}`, { what: 'the AI answer', noTools: true, model: config.ai.model || null }));
+  const call = async (system, user, c = cfg) => parseAnswer(await run(c, `${system}\n\n${user}`, { what: 'the AI answer', noTools: true, model: config.ai.model || null }));
   return {
     name: 'claude-code',
     model: config.ai.model || 'Claude Code default',

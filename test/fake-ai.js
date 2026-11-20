@@ -29,7 +29,7 @@ function reply(system, user, state) {
 }
 
 export function startFakeAi(kind) {
-  const state = { requests: [], down: false, reviewFindings: null, importReply: null, importPrompts: [] };
+  const state = { requests: [], down: false, reviewFindings: null, importReply: null, importPrompts: [], cutOff: false };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (d) => { raw += d; });
@@ -41,13 +41,15 @@ export function startFakeAi(kind) {
         return res.end(JSON.stringify({ error: { message: 'down' } }));
       }
       res.writeHead(200, { 'content-type': 'application/json' });
+      // state.cutOff: the answer stops halfway, at the length limit.
+      const text = (out) => (state.cutOff ? JSON.stringify(out).slice(0, 20) : JSON.stringify(out));
       if (kind === 'claude') {
         const out = reply(body.system, body.messages[0].content, state);
-        return res.end(JSON.stringify({ id: 'msg_1', type: 'message', role: 'assistant', model: body.model, stop_reason: 'end_turn',
-          content: [{ type: 'text', text: JSON.stringify(out) }], usage: { input_tokens: 1, output_tokens: 1 } }));
+        return res.end(JSON.stringify({ id: 'msg_1', type: 'message', role: 'assistant', model: body.model, stop_reason: state.cutOff ? 'max_tokens' : 'end_turn',
+          content: [{ type: 'text', text: text(out) }], usage: { input_tokens: 1, output_tokens: 1 } }));
       }
       const out = reply(body.messages[0].content, body.messages[1].content, state);
-      return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: JSON.stringify(out) } }] }));
+      return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: text(out) }, finish_reason: state.cutOff ? 'length' : 'stop' }] }));
     });
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({

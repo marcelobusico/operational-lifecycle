@@ -13,13 +13,18 @@ proposal in memory on this machine. Nothing is added to LifeCycle-Data, Jira or 
 
 | Pasted | Kind | What is read |
 |---|---|---|
-| `https://<site>.atlassian.net/browse/ABC-123`, a board link with `?selectedIssue=ABC-123`, or `ABC-123` | `jira` | The ticket. An epic is read with the issues under it (`parent = KEY OR "Epic Link" = KEY`). |
+| `https://<site>.atlassian.net/browse/ABC-123` (or `*.jira.com`), a board link with `?selectedIssue=ABC-123`, or `ABC-123` in capitals (lowercase `utf-8` or `covid-19` in pasted notes are not keys) | `jira` | The ticket, on the site in `sources.jira.siteUrl`, else on the site of the pasted link (a bare key goes with the only site pasted). An epic is read with the issues under it (`parent = KEY OR "Epic Link" = KEY`). |
 | `https://github.com/owner/repo` or `github.com/owner/repo` (a bare `owner/repo` is not taken, so words like CI/CD in pasted notes aren't read as repositories) | `github_repo` | README, the Markdown/text files in `docs/`, and the most recently updated PRs and issues (open and closed). **Source code is never read.** |
 | `https://github.com/owner/repo/pull/12` | `github_pr` | That PR and its description. |
 | `https://github.com/owner/repo/issues/7` | `github_issue` | That issue and its description. |
 | `https://github.com/owner/repo/blob/<ref>/<path>` | `github_file` | That one file at that ref (e.g. a plan committed to the repo). A branch name with slashes works: the possible ref/path splits are tried, shortest ref first, until one is a file. |
 | `https://<site>.atlassian.net/wiki/…` | `confluence` | Nothing yet: shown as *not read yet*. |
 | anything else | `unrecognized` | Nothing: shown with the reason, never dropped silently. |
+
+Links can be pasted one per line, separated by spaces or commas, or inside text: Markdown links
+(`[Epic](https://…)`) give their URL, and punctuation around a link is not part of it. GitHub links
+are read three at a time, so a long paste doesn't trip GitHub's rate limit. If the AI's answer is cut
+off at the provider's length limit, the analysis fails with that reason and suggests fewer links.
 
 At most 50 links per analysis. Jira is read on any machine with Claude Code signed in to Atlassian,
 whether or not `sources.jira.enabled` is on; if that run fails, every Jira link shows as failed with the fix.
@@ -77,8 +82,10 @@ one up, and nothing is read or proposed. The AI decides each item's level with t
 What the AI returns is checked before it is shown: unknown levels and empty names are dropped,
 parents must exist at the right level, evidence and source links must be ones that were actually read
 and sent to the AI (nothing invented; a PR or ticket whose text was left out for the size limit can't
-be linked either), and Jira keys must be valid keys (`ABC-123`). Names close to an existing feature
-or project are marked `possible_duplicate`, naming it. Duplicates are checked against the features
+be linked either), and Jira keys must be valid keys (`ABC-123`). A feature or project whose whole name
+matches an existing one (ignoring case, punctuation, little words and spacing; or its id; or nearly
+all words shared) is marked `possible_duplicate`, naming it. A name that only mentions an existing
+one ("Search inside checkout history" next to "Checkout") is not. Duplicates are checked against the features
 and projects LifeCycle last read from the shared repo; if it hasn't read them yet, the proposal says
 so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full read.
 

@@ -7,7 +7,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveFeature } from '../ask/resolve.js';
 import { JIRA_KEY } from '../definitions.js';
 
 export const PROPOSAL_SCHEMA = 'lifecycle.import-proposal/v1';
@@ -45,7 +44,10 @@ export function analyzeSystem() {
   ].join('\n');
 }
 
-export const evidenceKey = (e) => (e.source === 'jira' ? `jira:${e.key}` : `${e.type}:${e.repo}#${e.number}`);
+// GitHub repo names are case-insensitive (Acme/App is acme/app), so keys use the lowercase name.
+export const evidenceKey = (e) => (e.source === 'jira' ? `jira:${e.key}` : `${e.type}:${e.repo.toLowerCase()}#${e.number}`);
+// An id as the AI wrote it → the same form as evidenceKey.
+const evidenceIdOf = (id) => (/^jira:/i.test(id) ? `jira:${id.slice(5).trim().toUpperCase()}` : id.toLowerCase());
 
 // sources: [{ id, docs: [{ origin, title, text, evidence? }], evidence }] (read ones only); a doc's
 // evidence is the key (evidenceKey) of the ticket, PR or issue it is the text of. Returns
@@ -82,12 +84,29 @@ export function analyzePrompt({ sources, features, projects }) {
 
 const str = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 
+// Whole names are compared, not "is one mentioned in the other": "Search inside checkout history" is
+// new work, not the Checkout feature. Same words (ignoring case, punctuation, little words and
+// spacing: "Wish list" is "Wishlist"), the same as the id, or nearly all words shared.
+const LITTLE = new Set(['a', 'an', 'the', 'of', 'for', 'and', 'in', 'on', 'to', 'with', 'from', 'by']);
+const words = (s) => String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter((w) => w && !LITTLE.has(w));
+function sameName(a, b) {
+  const x = words(a);
+  const y = words(b);
+  if (!x.length || !y.length) return 0;
+  if (x.join('') === y.join('')) return 1;
+  const ys = new Set(y);
+  const shared = new Set(x.filter((w) => ys.has(w))).size;
+  const score = shared / new Set([...x, ...y]).size;
+  return x.length >= 2 && y.length >= 2 && score >= 0.75 ? score : 0;
+}
 function duplicateOf(level, name, features, projects) {
   const list = level === 'feature' ? features : level === 'project' ? projects : null;
-  if (!list?.length) return null;
-  const r = resolveFeature(name, list.map((x) => ({ id: x.id, name: x.name })));
-  const hit = r.kind === 'match' ? r.feature : r.kind === 'ambiguous' ? r.candidates[0] : null;
-  return hit ? { id: hit.id, name: hit.name, kind: level } : null;
+  let best = null;
+  for (const x of list || []) {
+    const score = Math.max(sameName(name, x.name), sameName(name, x.id));
+    if (score && (!best || score > best.score)) best = { score, x };
+  }
+  return best ? { id: best.x.id, name: best.x.name, kind: level } : null;
 }
 
 // The AI's answer → proposal items, keeping only what holds up (see the top of this file).
@@ -109,8 +128,8 @@ export function normalizeProposal(out, { docs, evidence, features = [], projects
     const parentItem = str(x.parent, 40) ? byRawRef.get(x.parent.trim()) : null;
     const parent = parentItem && parentItem.ref !== ref && PARENT_LEVEL[level].includes(parentItem.x.level) ? parentItem.ref : null;
     const ev = level === 'step' || level === 'task'
-      ? [...new Set((Array.isArray(x.evidence) ? x.evidence : []).map((id) => String(id).trim()))]
-        .map((id) => known.get(id) || known.get(id.replace(/^(jira|pr|issue):/i, (m) => m.toLowerCase()).replace(/^jira:(.+)$/, (m, k) => `jira:${k.toUpperCase()}`)))
+      ? [...new Set((Array.isArray(x.evidence) ? x.evidence : []).map((id) => evidenceIdOf(String(id).trim())))]
+        .map((id) => known.get(id))
         .filter((e) => e && (e.source !== 'jira' || JIRA_KEY.test(e.key)))
         .map((e) => (e.source === 'jira' ? { source: 'jira', type: 'ticket', key: e.key } : { source: 'github', type: e.type, repo: e.repo, number: e.number }))
       : [];

@@ -18,7 +18,7 @@ import { readJiraSources, importJiraPrompt } from '../src/import/read-jira.js';
 import { normalizeProposal, analyzeSystem, analyzePrompt } from '../src/import/analyze.js';
 import { fileSplits, readGithubSource } from '../src/import/read-github.js';
 import { SourceError } from '../src/sources/github-client.js';
-import { NO_AI_MESSAGE } from '../src/import/service.js';
+import { NO_AI_MESSAGE, eachLimited } from '../src/import/service.js';
 
 const DATA = 'team/LifeCycle-Data';
 const REPO = 'team/catalog';
@@ -141,7 +141,7 @@ after(async () => { await gh.close(); await ai.close(); });
 
 test('each pasted link shows its type before anything is read; unrecognized and Confluence links are flagged, not dropped', async () => {
   const links = parseLinks([
-    `${SITE}/browse/RWD-1`, 'rwd-1', 'OPS-7,', `${SITE}/jira/software/projects/RWD/boards/1?selectedIssue=RWD-5`,
+    `${SITE}/browse/RWD-1`, 'RWD-1', 'OPS-7,', `${SITE}/jira/software/projects/RWD/boards/1?selectedIssue=RWD-5`,
     `https://github.com/${REPO}`, `https://github.com/${REPO}/pull/12`, `https://github.com/${REPO}/issues/7`,
     `https://github.com/${REPO}/blob/main/docs/plan.md`, 'github.com/team/other', `${SITE}/wiki/spaces/X/pages/1/Plan`, 'https://example.com/x', 'hello',
   ].join('\n'));
@@ -405,7 +405,8 @@ function busyRepo({ prs, issues }) {
   const get = async (route) => {
     calls.push(route);
     if (route === '/repos/team/busy') return { html_url: 'https://github.com/team/busy', default_branch: 'main' };
-    if (route.startsWith('/repos/team/busy/pulls')) return items.filter((x) => x.pull_request).slice(0, 21);
+    const pg = route.match(/\/pulls\?.*per_page=(\d+)&page=(\d+)/);
+    if (pg) { const per = Number(pg[1]); const from = (Number(pg[2]) - 1) * per; return items.filter((x) => x.pull_request).slice(from, from + per); }
     const m = route.match(/\/issues\?.*per_page=(\d+)&page=(\d+)/);
     if (m) { const per = Number(m[1]); const from = (Number(m[2]) - 1) * per; return items.slice(from, from + per); }
     throw new SourceError('no_access', 'nothing', 404);
@@ -470,4 +471,70 @@ test('changed import caps apply to the next analysis without a restart; before t
     assert.match(r.body.proposal.duplicates_note, /Possible duplicates weren't checked.*Press Refresh View, then Analyze again/);
     assert.equal(r.body.proposal.items.find((i) => i.name === 'Wishlist').possible_duplicate, null);
   } finally { await p.close(); }
+});
+
+test('an AI answer cut off at the length limit says so and suggests fewer links; analyze asks for a large answer', async () => {
+  const p = await person();
+  try {
+    ai.state.cutOff = true;
+    const r = await p.analyze(`https://github.com/${REPO}`);
+    assert.equal(r.body.state, 'failed');
+    assert.match(r.body.message, /couldn't finish the proposal: the answer was cut off at the AI provider's length limit.*Paste fewer links/);
+    assert.equal(r.body.proposal, null);
+    assert.equal(ai.state.requests.at(-1).body.max_tokens, 20000);
+  } finally { ai.state.cutOff = false; await p.close(); }
+});
+
+test('without a configured Jira site, tickets are read on the site of the pasted link (also *.jira.com), one run per site', async () => {
+  const caps = DEFAULTS.import;
+  const cfg = { ...DEFAULTS.sources.jira, siteUrl: null };
+  const one = fakeJira();
+  const r = await readJiraSources({ entries: parseLinks(`${SITE}/browse/RWD-1 OPS-7`), cfg, caps, run: one });
+  assert.equal(one.calls.length, 1);
+  assert.match(one.calls[0].prompt, /getAccessibleAtlassianResources to get the cloudId of https:\/\/acme\.atlassian\.net/);
+  assert.equal(r.get('OPS-7').status, 'read', 'a bare key goes with the only site pasted');
+  assert.doesNotMatch(one.calls[0].prompt, /key in \(/, 'tickets are read one by one, so one bad key does not fail the rest');
+
+  const two = fakeJira();
+  const r2 = await readJiraSources({ entries: parseLinks(`https://corp.jira.com/browse/RWD-1 ${SITE}/browse/OPS-7`), cfg, caps, run: two });
+  assert.equal(two.calls.length, 2);
+  assert.ok(two.calls.some((c) => /cloudId of https:\/\/corp\.jira\.com/.test(c.prompt)));
+  assert.equal(r2.get('RWD-1').url, 'https://corp.jira.com/browse/RWD-1', 'links stay on the pasted site');
+  assert.ok(r2.get('RWD-1').docs.every((d) => d.origin.startsWith('https://corp.jira.com/browse/')));
+});
+
+test('pasted notes: lowercase word-number pairs are not Jira keys, Markdown links and trailing punctuation are handled', () => {
+  const links = parseLinks(`Epic [plan](${SITE}/browse/RWD-1): we move to utf-8 (covid-19 rules), see https://github.com/${REPO}! Also OPS-7?`);
+  assert.deepEqual(links.filter((l) => l.status === 'ok').map((l) => [l.kind, l.key || l.repo]), [['jira', 'RWD-1'], ['github_repo', REPO], ['jira', 'OPS-7']]);
+  assert.match(links.find((l) => l.input === 'utf-8').reason, /written in capitals \(UTF-8\)/);
+});
+
+test('evidence matches whatever case the AI writes the repository in; duplicates compare whole names', () => {
+  const pr = { source: 'github', type: 'pr', repo: 'Acme/App', number: 5, title: 'Checkout API' };
+  const docs = new Map([['S1', { origin: 'https://github.com/Acme/App/pull/5', evidence: 'pr:acme/app#5' }]]);
+  const features = [{ id: 'checkout', name: 'Checkout' }, { id: 'wishlist', name: 'Wishlist' }, { id: 'gift-cards', name: 'Gift cards for friends' }];
+  const items = normalizeProposal({ items: [
+    { ref: 'f1', level: 'feature', name: 'Search inside checkout history', sources: ['S1'] },
+    { ref: 'f2', level: 'feature', name: 'Wish list', sources: ['S1'] },
+    { ref: 'f3', level: 'feature', name: 'Gift cards for your friends', sources: ['S1'] },
+    { ref: 'f4', level: 'feature', name: 'checkout', sources: ['S1'] },
+    { ref: 's1', level: 'step', name: 'Development', parent: 'f1', evidence: ['pr:acme/app#5', 'PR:ACME/APP#5'], sources: ['S1'] },
+  ] }, { docs, evidence: [pr], features });
+  assert.deepEqual(items.map((i) => i.possible_duplicate?.id ?? null), [null, 'wishlist', 'gift-cards', 'checkout', null]);
+  assert.deepEqual(items[4].evidence, [{ source: 'github', type: 'pr', repo: 'Acme/App', number: 5 }]);
+});
+
+test('PRs are read in pages, so a cap of 100 or more still says older PRs were left out; GitHub links are read a few at a time', async () => {
+  const busy = busyRepo({ prs: 500, issues: 0 });
+  const r = await readGithubSource({ entry: { kind: 'github_repo', repo: 'team/busy' }, get: busy.get, caps: { ...CAPS, maxPrsPerRepo: 100 } });
+  assert.equal(r.evidence.filter((e) => e.type === 'pr').length, 100);
+  assert.ok(r.left_out.some((l) => /older PRs not read \(only the 100 most recently updated\)/.test(l)), r.left_out.join(' | '));
+  assert.equal(busy.calls.filter((c) => c.includes('/pulls?')).length, 2);
+
+  let now = 0;
+  let most = 0;
+  const done = [];
+  await eachLimited([1, 2, 3, 4, 5, 6, 7], 3, async (x) => { now += 1; most = Math.max(most, now); await new Promise((r2) => setTimeout(r2, 5)); now -= 1; done.push(x); });
+  assert.equal(most, 3);
+  assert.equal(done.length, 7);
 });

@@ -48,8 +48,15 @@ async function readRepo(get, e, caps) {
     if (typeof text === 'string' && text.trim()) docs.push({ origin: `${html}/blob/${branch}/${enc(f.path)}`, title: `${f.path} in ${e.repo}`, text: cut(text, caps.maxCharsPerSource) });
   }
   if (files.length > caps.maxDocsPerRepo) leftOut.push(`${plural(files.length - caps.maxDocsPerRepo, 'more file', 'more files')} in docs/ not read (limit ${caps.maxDocsPerRepo})`);
-  const prs = await get(`/repos/${e.repo}/pulls?state=all&sort=updated&direction=desc&per_page=${Math.min(100, caps.maxPrsPerRepo + 1)}`, { what: `the PRs of ${e.repo}` });
-  const prList = Array.isArray(prs) ? prs : [];
+  // One more than the cap, so the result can say older ones were left out; in pages of at most 100.
+  const prList = [];
+  const prPage = Math.min(ISSUE_PAGE, caps.maxPrsPerRepo + 1);
+  for (let page = 1; prList.length <= caps.maxPrsPerRepo; page += 1) {
+    const got = await get(`/repos/${e.repo}/pulls?state=all&sort=updated&direction=desc&per_page=${prPage}&page=${page}`, { what: `the PRs of ${e.repo}` });
+    const list = Array.isArray(got) ? got : [];
+    prList.push(...list);
+    if (list.length < prPage) break;
+  }
   for (const p of prList.slice(0, caps.maxPrsPerRepo)) {
     const ev = { source: 'github', type: 'pr', repo: e.repo, number: p.number, title: p.title, url: `${html}/pull/${p.number}` };
     docs.push({ origin: `${html}/pull/${p.number}`, title: `PR ${e.repo}#${p.number}: ${p.title}`, text: itemText('pr', p), evidence: evidenceKey(ev) });

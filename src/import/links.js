@@ -56,7 +56,10 @@ function one(input) {
     try { u = new URL(input); } catch { return unrecognized(input, 'This is not a valid link.'); }
     return fromUrl(input, u);
   }
-  if (JIRA_KEY.test(input.toUpperCase()) && /^[A-Za-z][A-Za-z0-9_]*-\d+$/.test(input)) return jiraEntry(input, input.toUpperCase());
+  // A bare key only as Jira writes it (ABC-123): lowercase words like utf-8 or covid-19 in pasted
+  // notes aren't tickets. Keys in Jira links may be any case (above).
+  if (JIRA_KEY.test(input) && /^[A-Z][A-Z0-9_]*-\d+$/.test(input)) return jiraEntry(input, input);
+  if (/^[A-Za-z][A-Za-z0-9_]*-\d+$/.test(input) && JIRA_KEY.test(input.toUpperCase())) return unrecognized(input, `Not taken as a Jira key: keys are written in capitals (${input.toUpperCase()}). Paste the key that way, or the ticket's link.`);
   // github.com/… without the https://. A bare owner/repo is not taken: pasted notes are full of words
   // like CI/CD and and/or, which would be read as repositories.
   if (/^(www\.)?github\.com\//i.test(input)) {
@@ -67,8 +70,10 @@ function one(input) {
 }
 
 // The text a person pasted → one entry per distinct link, in order. Separated by whitespace or commas.
+// Markdown links ([Epic](https://…)) give their URL; punctuation around a word is not part of it.
 export function parseLinks(text) {
-  const words = String(text || '').split(/[\s,]+/).map((w) => w.trim().replace(/^[<(["']+|[>)\]"'.;]+$/g, '')).filter(Boolean);
+  const plain = String(text || '').replace(/\[([^\]\n]*)\]\((\S+?)\)/g, ' $2 ');
+  const words = plain.split(/[\s,]+/).map((w) => w.trim().replace(/^[<(["'*_`]+|[>)\]"'.;:!?*_`]+$/g, '')).filter(Boolean);
   const seen = new Set();
   const out = [];
   for (const w of words) {
