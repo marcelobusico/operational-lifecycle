@@ -911,13 +911,17 @@ html.sb-resizing .shell { transition: none; }
 
 /* Where each status comes from (status.sources): exact link or "no source item", and read time. */
 .srcline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; color: var(--muted-foreground); margin: 2px 0 4px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
-/* Labels can name long features or be bare URLs: let every piece wrap/break inside its box. */
+/* Labels can name long features or be bare URLs: let them wrap and break inside their box.
+   Read times and the compact "source ↗" are short plain words: wrap only between words. */
 .srcline > * { min-width: 0; overflow-wrap: anywhere; }
 .srcline .src-link { font-weight: 500; }
+.srcline .src-compact { white-space: nowrap; }
+.srcline .src-read, .srcline .src-unav { overflow-wrap: normal; }
 .srcline .src-none { font-style: italic; }
 .srcline .src-unav { color: var(--warning, #b45309); font-weight: 600; }
-.f-callout .srcline { flex-basis: 100%; }
 .f-sources .src-table { width: 100%; }
+/* Keep the source column readable: breakable labels would otherwise let the table squeeze it first. */
+.f-sources .src-table td .srcline { min-width: 14ch; }
 .f-sources .src-table th[scope="row"] { font-weight: 500; text-align: left; }
 .f-sources .src-table td { vertical-align: top; }
 /* Definition lists (team ownership) */
