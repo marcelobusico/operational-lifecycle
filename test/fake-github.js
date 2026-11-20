@@ -161,7 +161,9 @@ export function startFakeGithub({ token = 'test-token-not-a-real-credential' } =
     if ((rest === '/pulls' || rest === '/issues') && req.method === 'GET') {
       const mine = (m, kind) => [...m.entries()].filter(([k]) => k.startsWith(`${repo}#`)).map(([k, v]) => ({ number: Number(k.split('#')[1]), user: { login: 'dev' }, state: 'open', ...v, ...(kind === 'pr' && rest === '/issues' ? { pull_request: {} } : {}) }));
       const list = (rest === '/pulls' ? mine(state.prs, 'pr') : [...mine(state.issues, 'issue'), ...mine(state.prs, 'pr')]).sort((a, b) => b.number - a.number);
-      return json(res, 200, list.slice(0, Number(url.searchParams.get('per_page')) || 30));
+      const per = Number(url.searchParams.get('per_page')) || 30;
+      const from = ((Number(url.searchParams.get('page')) || 1) - 1) * per;
+      return json(res, 200, list.slice(from, from + per));
     }
     if (rest.startsWith('/contents/')) {
       const ref = url.searchParams.get('ref');

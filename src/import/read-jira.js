@@ -121,7 +121,7 @@ export async function readJiraSources({ entries, cfg, caps, run = runJira }) {
       status: 'read', reason: null, type: t.type,
       label: `${t.type ? `Jira ${t.type.toLowerCase()}` : 'Jira ticket'} ${k}: ${t.summary}${t.children.length ? ` (${t.children.length} ${t.children.length === 1 ? 'issue' : 'issues'} under it read)` : ''}`,
       url: t.url || pasted.get(k) || null,
-      docs: all.map((x) => ({ origin: origin(x), title: `${x.type || 'Ticket'} ${x.key}: ${x.summary}`, text: ticketText(x) })),
+      docs: all.map((x) => ({ origin: origin(x), title: `${x.type || 'Ticket'} ${x.key}: ${x.summary}`, text: ticketText(x), evidence: `jira:${x.key}` })),
       evidence: all.map((x) => ({ source: 'jira', type: 'ticket', key: x.key, title: x.summary, url: x.url })),
       left_out: leftOut,
     });

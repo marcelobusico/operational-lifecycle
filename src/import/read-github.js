@@ -5,10 +5,13 @@
 //   file:       that one file at the linked ref (e.g. a plan committed to the repo).
 // Every list is cut to the caps in config `import`; what is skipped is said in left_out.
 import { SourceError } from '../sources/github-client.js';
+import { evidenceKey } from './analyze.js';
 
 const RAW = 'application/vnd.github.raw';
 const DOC = /\.(md|mdx|markdown|txt|rst|adoc)$/i;
 const BODY_MAX = 2000; // a PR's or issue's description, in a repository's list
+const ISSUE_PAGE = 100; // GitHub's largest page
+const ISSUE_PAGES = 3;
 const enc = (p) => p.split('/').map(encodeURIComponent).join('/');
 const cut = (s, max) => (typeof s === 'string' ? (s.length > max ? `${s.slice(0, max)}\n[… cut at ${max} characters]` : s) : '');
 const reasonOf = (err) => (err instanceof SourceError ? err.message : `GitHub couldn't be read: ${err.message}`);
@@ -48,17 +51,28 @@ async function readRepo(get, e, caps) {
   const prs = await get(`/repos/${e.repo}/pulls?state=all&sort=updated&direction=desc&per_page=${Math.min(100, caps.maxPrsPerRepo + 1)}`, { what: `the PRs of ${e.repo}` });
   const prList = Array.isArray(prs) ? prs : [];
   for (const p of prList.slice(0, caps.maxPrsPerRepo)) {
-    docs.push({ origin: `${html}/pull/${p.number}`, title: `PR ${e.repo}#${p.number}: ${p.title}`, text: itemText('pr', p) });
-    evidence.push({ source: 'github', type: 'pr', repo: e.repo, number: p.number, title: p.title, url: `${html}/pull/${p.number}` });
+    const ev = { source: 'github', type: 'pr', repo: e.repo, number: p.number, title: p.title, url: `${html}/pull/${p.number}` };
+    docs.push({ origin: `${html}/pull/${p.number}`, title: `PR ${e.repo}#${p.number}: ${p.title}`, text: itemText('pr', p), evidence: evidenceKey(ev) });
+    evidence.push(ev);
   }
   if (prList.length > caps.maxPrsPerRepo) leftOut.push(`older PRs not read (only the ${caps.maxPrsPerRepo} most recently updated)`);
-  const issues = await get(`/repos/${e.repo}/issues?state=all&sort=updated&direction=desc&per_page=100`, { what: `the issues of ${e.repo}` });
-  const issueList = (Array.isArray(issues) ? issues : []).filter((i) => !i.pull_request);
+  // GitHub's issues list has the PRs in it too, so on a busy repository one page may hold no issues at
+  // all: read pages until there are enough issues or the list ends (at most ISSUE_PAGES pages).
+  const issueList = [];
+  let listEnded = false;
+  for (let page = 1; page <= ISSUE_PAGES && issueList.length <= caps.maxIssuesPerRepo; page += 1) {
+    const got = await get(`/repos/${e.repo}/issues?state=all&sort=updated&direction=desc&per_page=${ISSUE_PAGE}&page=${page}`, { what: `the issues of ${e.repo}` });
+    const list = Array.isArray(got) ? got : [];
+    issueList.push(...list.filter((i) => !i.pull_request));
+    if (list.length < ISSUE_PAGE) { listEnded = true; break; }
+  }
   for (const i of issueList.slice(0, caps.maxIssuesPerRepo)) {
-    docs.push({ origin: `${html}/issues/${i.number}`, title: `Issue ${e.repo}#${i.number}: ${i.title}`, text: itemText('issue', i) });
-    evidence.push({ source: 'github', type: 'issue', repo: e.repo, number: i.number, title: i.title, url: `${html}/issues/${i.number}` });
+    const ev = { source: 'github', type: 'issue', repo: e.repo, number: i.number, title: i.title, url: `${html}/issues/${i.number}` };
+    docs.push({ origin: `${html}/issues/${i.number}`, title: `Issue ${e.repo}#${i.number}: ${i.title}`, text: itemText('issue', i), evidence: evidenceKey(ev) });
+    evidence.push(ev);
   }
   if (issueList.length > caps.maxIssuesPerRepo) leftOut.push(`older issues not read (only the ${caps.maxIssuesPerRepo} most recently updated)`);
+  else if (!listEnded) leftOut.push(`older issues not looked for: only the ${ISSUE_PAGES * ISSUE_PAGE} most recently updated PRs and issues were checked, and ${issueList.length ? `only ${plural(issueList.length, 'was an issue', 'were issues')}` : 'none was an issue'}`);
   const docCount = docs.length - evidence.length;
   const counts = [docCount && plural(docCount, 'document', 'documents'),
     prList.length && plural(Math.min(prList.length, caps.maxPrsPerRepo), 'PR', 'PRs'), issueList.length && plural(Math.min(issueList.length, caps.maxIssuesPerRepo), 'issue', 'issues')].filter(Boolean);
@@ -69,10 +83,11 @@ async function readItem(get, e) {
   const pr = e.kind === 'github_pr';
   const x = await get(`/repos/${e.repo}/${pr ? 'pulls' : 'issues'}/${e.number}`, { what: `${pr ? 'PR' : 'issue'} #${e.number} in ${e.repo}` });
   const type = pr || x?.pull_request ? 'pr' : 'issue';
+  const ev = { source: 'github', type, repo: e.repo, number: e.number, title: x.title, url: e.url };
   return {
     status: 'read', reason: null, label: `${type === 'pr' ? 'PR' : 'Issue'} ${e.repo}#${e.number}: ${x.title}`, url: e.url,
-    docs: [{ origin: e.url, title: `${type === 'pr' ? 'PR' : 'Issue'} ${e.repo}#${e.number}: ${x.title}`, text: itemText(type, x) }],
-    evidence: [{ source: 'github', type, repo: e.repo, number: e.number, title: x.title, url: e.url }],
+    docs: [{ origin: e.url, title: `${type === 'pr' ? 'PR' : 'Issue'} ${e.repo}#${e.number}: ${x.title}`, text: itemText(type, x), evidence: evidenceKey(ev) }],
+    evidence: [ev],
     left_out: [],
   };
 }
@@ -94,8 +109,9 @@ async function readFile(get, e, caps) {
       at = split;
       break;
     } catch (err) {
-      // 404: not a file at this ref (or no such ref): try the next split. Anything else is the answer.
-      if (err?.status !== 404) throw err;
+      // A plain 404: not a file at this ref (or no such ref): try the next split. Anything else (no
+      // GitHub access, single sign-on, rate limit) is the answer, with its own fix.
+      if (!(err?.status === 404 && err.plainNotFound)) throw err;
       first ||= err;
     }
   }

@@ -14,7 +14,8 @@ const unrecognized = (input, reason) => ({ input, kind: 'unrecognized', url: nul
 
 function fromUrl(input, u) {
   const host = u.hostname.toLowerCase();
-  const parts = u.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  let parts;
+  try { parts = u.pathname.split('/').filter(Boolean).map(decodeURIComponent); } catch { return unrecognized(input, 'This is not a valid link (it has a broken %-escape).'); }
   if (host === 'github.com' || host === 'www.github.com') {
     const [owner, name, what, ...rest] = parts;
     if (!owner || !name || !REPO_PART.test(owner) || !REPO_PART.test(name)) return unrecognized(input, 'A GitHub link must name a repository (github.com/owner/repo).');
@@ -56,9 +57,13 @@ function one(input) {
     return fromUrl(input, u);
   }
   if (JIRA_KEY.test(input.toUpperCase()) && /^[A-Za-z][A-Za-z0-9_]*-\d+$/.test(input)) return jiraEntry(input, input.toUpperCase());
-  const repo = input.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
-  if (repo) return fromUrl(input, new URL(`https://github.com/${repo[1]}/${repo[2]}`));
-  return unrecognized(input, 'Not a link, a Jira key (ABC-123) or a GitHub owner/repo.');
+  // github.com/… without the https://. A bare owner/repo is not taken: pasted notes are full of words
+  // like CI/CD and and/or, which would be read as repositories.
+  if (/^(www\.)?github\.com\//i.test(input)) {
+    try { return fromUrl(input, new URL(`https://${input}`)); } catch { return unrecognized(input, 'This is not a valid link.'); }
+  }
+  if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input)) return unrecognized(input, 'For a GitHub repository, paste its link (github.com/owner/repo), so words like CI/CD aren\'t read as repositories.');
+  return unrecognized(input, 'Not a link, a Jira key (ABC-123) or a GitHub link (github.com/owner/repo).');
 }
 
 // The text a person pasted → one entry per distinct link, in order. Separated by whitespace or commas.

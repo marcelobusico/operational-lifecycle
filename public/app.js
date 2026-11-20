@@ -516,6 +516,7 @@ function importProposalHtml(p) {
   const counts = ['project', 'feature', 'step', 'task'].filter(n).map((l) => `${n(l)} ${n(l) === 1 ? l : `${l}s`}`).join(', ');
   return `<section class="section card imp-proposal"><h2>Proposal</h2>
     <p class="muted small">${items.length ? `${esc(counts)}, proposed by ${esc(p.provider?.name || 'the AI')}${p.provider?.model ? ` (${esc(p.provider.model)})` : ''}. Each level was decided with LifeCycle's terminology rule; the reason is under each item.` : 'The AI proposed nothing from these sources.'}</p>
+    ${p.duplicates_note ? `<p class="small imp-dup" role="note">${esc(p.duplicates_note)}</p>` : ''}
     ${roots.length ? `<ul class="imp-tree imp-root">${roots.map((i) => importItemHtml(i, kidsOf)).join('')}</ul>` : ''}
   </section>`;
 }

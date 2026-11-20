@@ -47,8 +47,11 @@ export function analyzeSystem() {
 
 export const evidenceKey = (e) => (e.source === 'jira' ? `jira:${e.key}` : `${e.type}:${e.repo}#${e.number}`);
 
-// sources: [{ id, docs: [{ origin, title, text }], evidence }] (read ones only). Returns
-// { prompt, docs: Map(Sn → doc), cut: Map(source id → number of documents left out) }.
+// sources: [{ id, docs: [{ origin, title, text, evidence? }], evidence }] (read ones only); a doc's
+// evidence is the key (evidenceKey) of the ticket, PR or issue it is the text of. Returns
+// { prompt, docs: Map(Sn → doc), cut: Map(source id → number of documents left out), evidence }:
+// evidence is only what was sent, so a PR or ticket whose text was cut for the budget can't be
+// linked from its title alone.
 export function analyzePrompt({ sources, features, projects }) {
   const docs = new Map();
   const cut = new Map();
@@ -65,15 +68,16 @@ export function analyzePrompt({ sources, features, projects }) {
       blocks.push(block);
     }
   }
-  const evidence = sources.flatMap((s) => s.evidence);
+  const sent = new Set([...docs.values()].map((d) => d.evidence).filter(Boolean));
+  const evidence = [...new Map(sources.flatMap((s) => s.evidence).filter((e) => sent.has(evidenceKey(e))).map((e) => [evidenceKey(e), e])).values()];
   const prompt = [
     `Features already defined in LifeCycle (id: name):\n${features.length ? features.map((f) => `${f.id}: ${f.name}`).join('\n') : '(none)'}`,
     `Projects already defined (id: name):\n${projects.length ? projects.map((p) => `${p.id}: ${p.name}`).join('\n') : '(none)'}`,
-    `Evidence you may link (id: title):\n${evidence.length ? [...new Map(evidence.map((e) => [evidenceKey(e), e])).values()].map((e) => `${evidenceKey(e)}: ${e.title || ''}`).join('\n') : '(none)'}`,
+    `Evidence you may link (id: title):\n${evidence.length ? evidence.map((e) => `${evidenceKey(e)}: ${e.title || ''}`).join('\n') : '(none)'}`,
     'Sources:',
     blocks.join('\n\n---\n\n'),
   ].join('\n\n');
-  return { prompt, docs, cut };
+  return { prompt, docs, cut, evidence };
 }
 
 const str = (v, max) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
@@ -124,8 +128,8 @@ export function normalizeProposal(out, { docs, evidence, features = [], projects
 // sources: read sources ({ id, docs, evidence }). provider: has analyze({ system, prompt }).
 // Returns { items, cut } or throws with the provider's error.
 export async function analyzeSources({ provider, sources, features, projects }) {
-  const { prompt, docs, cut } = analyzePrompt({ sources, features, projects });
+  const { prompt, docs, cut, evidence } = analyzePrompt({ sources, features, projects });
   const out = await provider.analyze({ system: analyzeSystem(), prompt });
-  const items = normalizeProposal(out, { docs, evidence: sources.flatMap((s) => s.evidence), features, projects });
+  const items = normalizeProposal(out, { docs, evidence, features, projects });
   return { items, cut };
 }

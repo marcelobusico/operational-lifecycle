@@ -15,8 +15,9 @@ import { DEFAULTS } from '../src/config.js';
 import { WRITE_TOOLS } from '../src/claude-run.js';
 import { parseLinks } from '../src/import/links.js';
 import { readJiraSources, importJiraPrompt } from '../src/import/read-jira.js';
-import { normalizeProposal, analyzeSystem } from '../src/import/analyze.js';
-import { fileSplits } from '../src/import/read-github.js';
+import { normalizeProposal, analyzeSystem, analyzePrompt } from '../src/import/analyze.js';
+import { fileSplits, readGithubSource } from '../src/import/read-github.js';
+import { SourceError } from '../src/sources/github-client.js';
 import { NO_AI_MESSAGE } from '../src/import/service.js';
 
 const DATA = 'team/LifeCycle-Data';
@@ -81,7 +82,9 @@ function proposalFor(prompt) {
 // The S id of the source block whose title contains `text`.
 const findS = (prompt, text) => (prompt.match(new RegExp(`\\[(S\\d+)\\] [^\\n]*${text.replace(/[.*+?^${}()|[\]\\#]/g, '\\$&')}`)) || [])[1] || 'S0';
 
-async function person({ provider = 'openai-compatible', jiraRun = fakeJira(), importCaps = {} } = {}) {
+// readFirst: read the shared repo before analyzing, as opening LifeCycle does (duplicates are checked
+// against what was last read).
+async function person({ provider = 'openai-compatible', jiraRun = fakeJira(), importCaps = {}, readFirst = true } = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'lifecycle-import-'));
   process.env.LIFECYCLE_HOME = home;
   const config = { ...DEFAULTS, dataRepo: DATA, me: { owners: [], github: null },
@@ -91,6 +94,7 @@ async function person({ provider = 'openai-compatible', jiraRun = fakeJira(), im
   const app = createApp({ alwaysLive: true, config, token: gh.token, flagsmithApiKey: null, jiraRun });
   const service = createAskService({ app, readConfig: () => config });
   const server = createServer(app, service);
+  if (readFirst) await app.refresh();
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const url = `http://127.0.0.1:${server.address().port}`;
   const call = async (method, p, body) => {
@@ -109,7 +113,7 @@ async function person({ provider = 'openai-compatible', jiraRun = fakeJira(), im
     }
     throw new Error('the analysis did not end');
   };
-  return { call, analyze, jiraRun, close: () => new Promise((r) => { server.close(r); server.closeAllConnections(); }) };
+  return { call, analyze, jiraRun, config, close: () => new Promise((r) => { server.close(r); server.closeAllConnections(); }) };
 }
 
 before(async () => {
@@ -139,7 +143,7 @@ test('each pasted link shows its type before anything is read; unrecognized and 
   const links = parseLinks([
     `${SITE}/browse/RWD-1`, 'rwd-1', 'OPS-7,', `${SITE}/jira/software/projects/RWD/boards/1?selectedIssue=RWD-5`,
     `https://github.com/${REPO}`, `https://github.com/${REPO}/pull/12`, `https://github.com/${REPO}/issues/7`,
-    `https://github.com/${REPO}/blob/main/docs/plan.md`, 'team/other', `${SITE}/wiki/spaces/X/pages/1/Plan`, 'https://example.com/x', 'hello',
+    `https://github.com/${REPO}/blob/main/docs/plan.md`, 'github.com/team/other', `${SITE}/wiki/spaces/X/pages/1/Plan`, 'https://example.com/x', 'hello',
   ].join('\n'));
   assert.deepEqual(links.map((l) => l.kind), ['jira', 'jira', 'jira', 'github_repo', 'github_pr', 'github_issue', 'github_file', 'github_repo', 'confluence', 'unrecognized', 'unrecognized']);
   assert.equal(links[0].key, 'RWD-1', 'RWD-1 and its link are one ticket');
@@ -149,12 +153,17 @@ test('each pasted link shows its type before anything is read; unrecognized and 
   assert.equal(conf.status, 'unsupported');
   assert.match(conf.reason, /Confluence pages aren't read yet/);
   for (const l of links.filter((x) => x.kind === 'unrecognized')) assert.ok(l.reason, 'an unrecognized link says why');
+  // Words in pasted notes aren't repositories, and a broken %-escape flags that one link only.
+  const notes = parseLinks(`migrate CI/CD and/or 1/2 https://github.com/${REPO}/blob/main/100%zz RWD-1`);
+  assert.deepEqual(notes.filter((l) => l.status === 'ok').map((l) => l.kind), ['jira']);
+  assert.match(notes.find((l) => l.input === 'CI/CD').reason, /github\.com\/owner\/repo/);
+  assert.match(notes.find((l) => l.input.endsWith('%zz')).reason, /not a valid link/);
 
   const p = await person();
   try {
-    const r = await p.call('POST', '/api/import/links', { text: `RWD-1 https://nope.example/x ${SITE}/wiki/a` });
+    const r = await p.call('POST', '/api/import/links', { text: `RWD-1 https://nope.example/x ${SITE}/wiki/a https://github.com/a/b/blob/main/100%zz` });
     assert.equal(r.status, 200);
-    assert.deepEqual(r.body.links.map((l) => [l.kind, l.status]), [['jira', 'ok'], ['unrecognized', 'unrecognized'], ['confluence', 'unsupported']]);
+    assert.deepEqual(r.body.links.map((l) => [l.kind, l.status]), [['jira', 'ok'], ['unrecognized', 'unrecognized'], ['confluence', 'unsupported'], ['unrecognized', 'unrecognized']]);
     assert.equal(r.body.ai.available, true);
     assert.equal(p.jiraRun.calls.length, 0, 'recognizing links reads nothing');
   } finally { await p.close(); }
@@ -386,4 +395,79 @@ test('the screen is reachable from the Roadmap and says nothing is added', () =>
   assert.match(ui, /href="#\/import">Import from links</);
   assert.match(ui, /Nothing has been added to LifeCycle, Jira or GitHub\./);
   assert.match(ui, /\/api\/import\/analyze\//);
+});
+
+// A stand-in for app.githubRead over a busy repository: `prs` PRs updated after `issues` issues.
+function busyRepo({ prs, issues }) {
+  const calls = [];
+  const items = [...Array.from({ length: prs }, (_, i) => ({ number: 10000 + i, title: `PR ${i}`, state: 'open', pull_request: {} })),
+    ...Array.from({ length: issues }, (_, i) => ({ number: i + 1, title: `Issue ${i}`, state: 'open' }))];
+  const get = async (route) => {
+    calls.push(route);
+    if (route === '/repos/team/busy') return { html_url: 'https://github.com/team/busy', default_branch: 'main' };
+    if (route.startsWith('/repos/team/busy/pulls')) return items.filter((x) => x.pull_request).slice(0, 21);
+    const m = route.match(/\/issues\?.*per_page=(\d+)&page=(\d+)/);
+    if (m) { const per = Number(m[1]); const from = (Number(m[2]) - 1) * per; return items.slice(from, from + per); }
+    throw new SourceError('no_access', 'nothing', 404);
+  };
+  return { get, calls };
+}
+const CAPS = { ...DEFAULTS.import };
+
+test('on a busy repository whose latest 100 PRs and issues are all PRs, issues are still read from the next pages; if none turn up, the result says so', async () => {
+  const some = busyRepo({ prs: 150, issues: 3 });
+  const r = await readGithubSource({ entry: { kind: 'github_repo', repo: 'team/busy' }, get: some.get, caps: CAPS });
+  assert.equal(r.status, 'read');
+  assert.equal(r.evidence.filter((e) => e.type === 'issue').length, 3, 'the issues on page 2 are read');
+  assert.match(r.label, /3 issues/);
+  assert.equal(some.calls.filter((c) => c.includes('/issues?')).length, 2);
+  assert.ok(!r.left_out.some((l) => /issues/.test(l)), 'the list ended: nothing about issues was left out');
+
+  const none = busyRepo({ prs: 400, issues: 2 });
+  const r2 = await readGithubSource({ entry: { kind: 'github_repo', repo: 'team/busy' }, get: none.get, caps: CAPS });
+  assert.equal(r2.evidence.filter((e) => e.type === 'issue').length, 0);
+  assert.equal(none.calls.filter((c) => c.includes('/issues?')).length, 3, 'at most three pages');
+  assert.ok(r2.left_out.some((l) => /older issues not looked for: only the 300 most recently updated PRs and issues were checked, and none was an issue/.test(l)), r2.left_out.join(' | '));
+});
+
+test('a file link on a machine without GitHub access says how to set it up, instead of trying other branches and blaming the link', async () => {
+  const tried = [];
+  const get = async (route) => { tried.push(route); throw new SourceError('no_access', 'No GitHub access works for LifeCycle right now, so it can\'t read docs/plan.md. Paste a token with `lifecycle setup`.', 404); };
+  const entry = parseLinks('https://github.com/org/private/blob/feature/x/docs/plan.md')[0];
+  const r = await readGithubSource({ entry, get, caps: CAPS });
+  assert.equal(r.status, 'failed');
+  assert.match(r.reason, /No GitHub access works for LifeCycle/);
+  assert.doesNotMatch(r.reason, /Check the link/);
+  assert.equal(tried.length, 1, 'no other split is tried');
+});
+
+test('a PR or ticket whose text was left out for the size limit is not offered as evidence, and is dropped if the AI links it anyway', () => {
+  const big = 'x'.repeat(299000); // the README fits in the 300,000 characters; the PR's long text after it doesn't
+  const pr = { source: 'github', type: 'pr', repo: 'team/a', number: 1, title: 'Wishlist API' };
+  const jira = { source: 'jira', type: 'ticket', key: 'RWD-1', title: 'Redeem' };
+  const sources = [
+    { id: 'j', docs: [{ origin: 'https://acme.atlassian.net/browse/RWD-1', title: 'Epic RWD-1', text: 'Redeem', evidence: 'jira:RWD-1' }], evidence: [jira] },
+    { id: 'g', docs: [{ origin: 'https://github.com/team/a#readme', title: 'README', text: big }, { origin: 'https://github.com/team/a/pull/1', title: 'PR team/a#1', text: `Adds the API. ${'y'.repeat(2000)}`, evidence: 'pr:team/a#1' }], evidence: [pr] },
+  ];
+  const { prompt, docs, cut, evidence } = analyzePrompt({ sources, features: [], projects: [] });
+  assert.equal(cut.get('g'), 1);
+  assert.deepEqual(evidence.map((e) => e.key || e.number), ['RWD-1']);
+  assert.match(prompt, /jira:RWD-1: Redeem/);
+  assert.doesNotMatch(prompt, /pr:team\/a#1/);
+  const items = normalizeProposal({ items: [{ ref: 's1', level: 'step', name: 'Development', evidence: ['pr:team/a#1', 'jira:RWD-1'], sources: ['S1'] }] }, { docs, evidence });
+  assert.deepEqual(items[0].evidence, [{ source: 'jira', type: 'ticket', key: 'RWD-1' }]);
+});
+
+test('changed import caps apply to the next analysis without a restart; before the shared repo is read, the proposal says duplicates were not checked', async () => {
+  const p = await person({ readFirst: false });
+  try {
+    p.config.import = { ...p.config.import, maxPrsPerRepo: 1 };
+    const r = await p.analyze(`https://github.com/${REPO}`);
+    assert.equal(r.body.state, 'done', r.body.message);
+    const src = r.body.proposal.sources[0];
+    assert.ok(src.left_out.some((l) => /only the 1 most recently updated/.test(l)), src.left_out.join(' | '));
+    assert.equal(r.body.proposal.duplicates_checked, false);
+    assert.match(r.body.proposal.duplicates_note, /Possible duplicates weren't checked.*Press Refresh View, then Analyze again/);
+    assert.equal(r.body.proposal.items.find((i) => i.name === 'Wishlist').possible_duplicate, null);
+  } finally { await p.close(); }
 });

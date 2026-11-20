@@ -90,6 +90,8 @@ export function createAskService({ app, providerFor = createProvider, readConfig
     follow: (id, on) => setFollow(id, on),
     history: (limit) => readHistory('asks', limit).map((h) => h.answer),
     me: () => currentConfig().me,
+    // The saved config as it is now (re-read each call), for settings that apply without a restart.
+    savedConfig: () => (readConfig ? readConfig() : loadConfig()),
     // The AI provider as configured right now (also used for the product review of feature edits).
     currentProvider: () => providerFor(currentConfig()),
     provider: () => {

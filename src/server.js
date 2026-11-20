@@ -73,7 +73,7 @@ export function createUpdateService(options = {}) {
 const LOCAL_DEFINITION =/^(features|projects|services|teams|changes)\/[a-z0-9][a-z0-9-]*\.ya?ml$/;
 
 export function createServer(app = createApp(), ask = createAskService({ app }), update = createUpdateService(),
-  importer = createImportService({ app, providerNow: () => ask.currentProvider() })) {
+  importer = createImportService({ app, providerNow: () => ask.currentProvider(), configNow: () => ask.savedConfig() })) {
   // AI product reviews by definition text, so "Review changes" then "Publish" asks the AI once.
   const reviews = new Map();
   async function review(built, defs) {

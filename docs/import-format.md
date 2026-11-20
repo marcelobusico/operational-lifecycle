@@ -14,7 +14,7 @@ proposal in memory on this machine. Nothing is added to LifeCycle-Data, Jira or 
 | Pasted | Kind | What is read |
 |---|---|---|
 | `https://<site>.atlassian.net/browse/ABC-123`, a board link with `?selectedIssue=ABC-123`, or `ABC-123` | `jira` | The ticket. An epic is read with the issues under it (`parent = KEY OR "Epic Link" = KEY`). |
-| `https://github.com/owner/repo` or `owner/repo` | `github_repo` | README, the Markdown/text files in `docs/`, and the most recently updated PRs and issues (open and closed). **Source code is never read.** |
+| `https://github.com/owner/repo` or `github.com/owner/repo` (a bare `owner/repo` is not taken, so words like CI/CD in pasted notes aren't read as repositories) | `github_repo` | README, the Markdown/text files in `docs/`, and the most recently updated PRs and issues (open and closed). **Source code is never read.** |
 | `https://github.com/owner/repo/pull/12` | `github_pr` | That PR and its description. |
 | `https://github.com/owner/repo/issues/7` | `github_issue` | That issue and its description. |
 | `https://github.com/owner/repo/blob/<ref>/<path>` | `github_file` | That one file at that ref (e.g. a plan committed to the repo). A branch name with slashes works: the possible ref/path splits are tried, shortest ref first, until one is a file. |
@@ -76,8 +76,11 @@ one up, and nothing is read or proposed. The AI decides each item's level with t
 
 What the AI returns is checked before it is shown: unknown levels and empty names are dropped,
 parents must exist at the right level, evidence and source links must be ones that were actually read
-(nothing invented), and Jira keys must be valid keys (`ABC-123`). Names close to an existing feature
-or project are marked `possible_duplicate`, naming it.
+and sent to the AI (nothing invented; a PR or ticket whose text was left out for the size limit can't
+be linked either), and Jira keys must be valid keys (`ABC-123`). Names close to an existing feature
+or project are marked `possible_duplicate`, naming it. Duplicates are checked against the features
+and projects LifeCycle last read from the shared repo; if it hasn't read them yet, the proposal says
+so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full read.
 
 ## API (local only)
 
@@ -90,6 +93,11 @@ or project are marked `possible_duplicate`, naming it.
 
 ## Adding a source type
 
-A reader turns one link into `{status, reason, label, url, docs: [{origin, title, text}], evidence, left_out}`
-(`src/import/read-*.js`). The analysis only sees `docs` (plain text with its origin link) and
-`evidence`, so a new source (e.g. Confluence) plugs in without changing the proposal.
+A reader turns one link into `{status, reason, label, url, docs: [{origin, title, text, evidence?}], evidence, left_out}`
+(`src/import/read-*.js`). A doc that is the text of a ticket, PR or issue names it in `evidence`
+(`jira:ABC-1`, `pr:owner/repo#12`, `issue:owner/repo#7`); only those whose doc was sent may be
+linked. The analysis only sees `docs` (plain text with its origin link) and `evidence`, so a new
+source (e.g. Confluence) plugs in without changing the proposal.
+
+Caps and the Jira site are read from `~/.lifecycle/config.json` at the start of each analysis, so a
+change applies to the next Analyze without restarting LifeCycle.

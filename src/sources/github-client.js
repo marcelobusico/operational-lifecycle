@@ -83,7 +83,11 @@ export function createGithubClient({ apiUrl, token, access = null, enabled = tru
       throw new SourceError('no_access', `Your GitHub access${via} isn't authorized for this organization's single sign-on, so it can't read ${what}. Authorize it${link ? ` at ${link}` : ' in GitHub (Settings → Applications, or Developer settings → tokens → Configure SSO)'}; for gh, run: gh auth refresh -h github.com.`, res.status);
     }
     if (res.status === 403 || res.status === 404) {
-      throw new SourceError('no_access', `Your GitHub credentials${via} can't read ${what}.`, res.status);
+      const err = new SourceError('no_access', `Your GitHub credentials${via} can't read ${what}.`, res.status);
+      // Working credentials, and GitHub says there is nothing there: callers that try alternatives (a
+      // /blob/ link's ref/path splits) may go on. The cases above need the person to fix their access.
+      err.plainNotFound = res.status === 404;
+      throw err;
     }
     throw new SourceError('unreachable', `GitHub answered HTTP ${res.status}.`, res.status);
   }

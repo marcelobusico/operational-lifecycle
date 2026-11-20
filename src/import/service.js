@@ -19,8 +19,9 @@ const UNKNOWN_AI = (name) => `Analysis needs an AI provider, and the one set up 
 const KEEP_JOBS = 5;
 
 // providerNow(): the AI provider as configured right now (src/ask/service.js currentProvider).
+// configNow(): the saved config as it is now, so changed caps or Jira site apply to the next analysis.
 // jiraRun / getGithub: replace the Claude Code run and the GitHub reads (tests).
-export function createImportService({ app, providerNow, jiraRun = app.jiraRun, getGithub = app.githubRead }) {
+export function createImportService({ app, providerNow, configNow = () => app.config, jiraRun = app.jiraRun, getGithub = app.githubRead }) {
   const jobs = new Map();
   let running = null;
 
@@ -38,12 +39,13 @@ export function createImportService({ app, providerNow, jiraRun = app.jiraRun, g
   });
 
   async function run(job, provider, entries) {
-    const caps = { ...DEFAULTS.import, ...(app.config.import || {}) };
+    const config = configNow() || app.config;
+    const caps = { ...DEFAULTS.import, ...(config.import || {}) };
     const readable = entries.filter((e) => e.status === 'ok');
     const set = (e, patch) => Object.assign(job.sources.find((s) => s.id === linkId(e)), patch);
     for (const e of readable) set(e, { status: 'reading' });
     const jiraEntries = readable.filter((e) => e.kind === 'jira');
-    const jiraCfg = { ...DEFAULTS.sources.jira, ...(app.config.sources?.jira || {}) };
+    const jiraCfg = { ...DEFAULTS.sources.jira, ...(config.sources?.jira || {}) };
     await Promise.all([
       jiraEntries.length ? readJiraSources({ entries: jiraEntries, cfg: jiraCfg, caps, ...(jiraRun ? { run: jiraRun } : {}) })
         .then((results) => { for (const e of jiraEntries) set(e, results.get(e.key)); }) : null,
@@ -57,7 +59,9 @@ export function createImportService({ app, providerNow, jiraRun = app.jiraRun, g
       return;
     }
     job.phase = 'analyzing';
-    const defs = await app.definitionsNow().catch(() => null);
+    // Duplicates are checked against what was last read from the shared repo; an analysis never starts
+    // a full read of every source just for this. If nothing was read yet, the proposal says so.
+    const defs = await app.definitionsLast().catch(() => null);
     const features = (defs?.featureDefs || []).map((f) => ({ id: f.id, name: f.name }));
     const projects = (defs?.projectDefs || []).map((p) => ({ id: p.id, name: p.name }));
     let result;
@@ -77,6 +81,8 @@ export function createImportService({ app, providerNow, jiraRun = app.jiraRun, g
       schema: PROPOSAL_SCHEMA, analyzed_at: new Date().toISOString(), provider: { name: provider.name, model: provider.model || null },
       sources: job.sources.map(({ id, docs, evidence, ...s }) => s),
       items: result.items,
+      duplicates_checked: Boolean(defs),
+      duplicates_note: defs ? null : 'Possible duplicates weren\'t checked: LifeCycle hasn\'t read the features and projects from the shared repo yet. Press Refresh View, then Analyze again.',
     };
     job.state = 'done';
     job.phase = 'done';
