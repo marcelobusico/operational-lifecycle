@@ -135,7 +135,12 @@ export function compileReview(review, defs) {
   for (const it of active.filter((x) => x.level === 'project')) {
     if (it.parent) problem(it.ref, 'parent', 'a project sits at the top; it has no parent');
     if (dupActive(it) && !it.duplicate_choice) problem(it.ref, 'duplicate_choice', `may be the existing project ${it.possible_duplicate.name}: choose skip, create anyway, or add to the existing one`);
-    if (dupActive(it) && it.duplicate_choice === 'merge') { projectIdOf.set(it.ref, it.possible_duplicate.id); continue; }
+    if (dupActive(it) && it.duplicate_choice === 'merge') {
+      // Nothing of its own to publish: its features go into the existing project.
+      projectIdOf.set(it.ref, it.possible_duplicate.id);
+      if (!problems.has(it.ref)) status.set(it.ref, { state: 'merged', reason: `Its features go into the existing project ${it.possible_duplicate.name}.` });
+      continue;
+    }
     const id = it.id || slug(it.name);
     projectIdOf.set(it.ref, id);
     projectUnits.push({ key: `project:${it.ref}`, ref: it.ref, draft: { id, name: it.name, owner: it.owner, description: it.description } });
@@ -152,7 +157,7 @@ export function compileReview(review, defs) {
     if (!base) return null;
     const draft = toDraft(base);
     draft.steps = draft.steps.map((s) => ({ ...s, add_evidence: [] }));
-    const u = { key, op: 'update', id, refs: [], draft, fields: new Map(), base_hash: textHash(defs.files?.get(base.file)), name: base.name };
+    const u = { key, op: 'update', id, refs: [], added: 0, draft, fields: new Map(), base_hash: textHash(defs.files?.get(base.file)), name: base.name };
     units.set(key, u);
     return u;
   };
@@ -213,7 +218,7 @@ export function compileReview(review, defs) {
       continue;
     }
     if (u.op === 'create' && !u.refs.includes(it.ref)) u.refs.push(it.ref);
-    if (u.op === 'update') u.refs.push(it.ref);
+    if (u.op === 'update') { u.refs.push(it.ref); u.added += 1; }
     const taken = new Set(u.draft.steps.map((s) => s.id));
     let sid = slug(it.name) || `step-${u.draft.steps.length + 1}`;
     for (let n = 2; taken.has(sid); n += 1) sid = `${slug(it.name) || 'step'}-${n}`;
@@ -227,7 +232,12 @@ export function compileReview(review, defs) {
     if (p?.kind !== 'ref' || p.item.level !== 'step') problem(it.ref, 'parent', 'a task is a PR, issue or ticket linked to a step of this proposal: pick the step');
     else if (!it.evidence.length) problem(it.ref, 'evidence', 'a task is linked as a PR, issue or Jira ticket: add one, or exclude the task');
   }
-  return { projects: projectUnits, features: [...units.values()].filter((u) => u.op === 'create' || u.refs.length), status, problems };
+  // A feature added to an existing one with no step to add would publish nothing.
+  for (const u of units.values()) {
+    if (u.op !== 'update' || u.added) continue;
+    for (const ref of u.refs) problem(ref, 'duplicate_choice', `nothing to add to the existing feature ${u.name}: include at least one of its steps, or choose skip`);
+  }
+  return { projects: projectUnits, features: [...units.values()].filter((u) => u.op === 'create' || u.added), status, problems };
 }
 
 // Which item and field a draft error belongs to (steps[2].evidence[0].key → that step's evidence).
@@ -263,7 +273,12 @@ export async function checkReview(review, defs, reviewFn) {
     for (const e of built.errors) at(p.ref).errors.push({ field: e.field === 'id' ? 'id' : e.field, message: e.message });
     p.ready = !at(p.ref).errors.length;
   }
+  // A new feature can't be published before its new project, or before a proposed feature it depends on.
+  const newProject = new Map(c.projects.map((p) => [p.draft.id, p]));
   for (const u of c.features) {
+    const proj = u.op === 'create' ? newProject.get(u.draft.project) : null;
+    const waits = proj && !proj.ready;
+    if (waits) at(u.refs[0]).errors.push({ field: 'parent', message: `its new project "${proj.draft.name}" can't be created yet; fix the project first` });
     const featureStubs = creates.filter((x) => x !== u).map(stub);
     const base = u.op === 'update' ? (defs.featureDefs || []).find((f) => f.id === u.id) : null;
     const features = [...(defs.featureDefs || []), ...featureStubs];
@@ -273,11 +288,22 @@ export async function checkReview(review, defs, reviewFn) {
     u.errors = built.errors;
     for (const e of built.errors) { const [ref, field] = errorTarget(u, e.field); at(ref).errors.push({ field, message: e.message }); }
     u.review = null;
-    if (!built.errors.length) {
+    if (!built.errors.length && !waits) {
       u.review = await reviewFn(built, features);
       for (const x of u.review.findings || []) { const [ref, field] = errorTarget(u, x.field); at(ref).findings.push({ ...x, field }); }
     }
-    u.ready = !built.errors.length && !u.review?.blocking && u.refs.every((r) => !c.problems.has(r));
+    u.ready = !waits && !built.errors.length && !u.review?.blocking && u.refs.every((r) => !c.problems.has(r));
+  }
+  const createOf = new Map(creates.map((u) => [u.id, u]));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const u of creates.filter((x) => x.ready)) {
+      const dep = u.draft.depends_on.map((d) => createOf.get(d)).find((x) => x && x !== u && !x.ready);
+      if (!dep) continue;
+      u.ready = false;
+      changed = true;
+      at(u.refs[0]).errors.push({ field: 'depends_on', message: `depends on the proposed feature "${dep.draft.name}", which can't be published yet; fix it first or remove the dependency` });
+    }
   }
 
   // Each item's state: what it belongs to decides (a step is ready when its feature is).

@@ -270,6 +270,83 @@ test('when the repo is unreachable, items go to the outbox, the person is told t
   assert.match(repoFile('projects/kids-corner.yaml'), /name: Kids corner/);
   assert.match(repoFile('features/kids-profiles.yaml'), /^project: kids-corner$/m);
   assert.ok(back.features.some((f) => f.feature.id === 'kids-profiles'));
+  const later = (await ana.review()).review;
+  assert.ok(later.items.every((it) => it.published && !it.published.queued), 'the review sees they were published');
+});
+
+test('a queued item whose outbox entry ends in a conflict comes back to the review with the error, and the entry is dropped', async () => {
+  const id = analysis([
+    { ref: 'p1', level: 'project', name: 'Music room', owner: 'Music team' },
+    { ref: 'f1', level: 'feature', name: 'Playlists', parent: 'p1', owner: 'Music team' },
+    { ref: 's1', level: 'step', name: 'Playlist API', parent: 'f1', owner: '@music-dev', done_when: 'API live' },
+  ]);
+  await ana.start(id);
+  await ana.review();
+  gh.state.down = true;
+  let r;
+  try { r = await ana.approve(); } finally { gh.state.down = false; }
+  assert.deepEqual(r.body.results.map((x) => x.outcome), ['queued', 'queued']);
+  // A teammate creates the same project before this machine reaches the repo again.
+  gh.state.files.get(DATA).set('projects/music-room.yaml', 'id: music-room\nname: Music room\nowner: Someone else\n');
+  await ana.get('/api/roadmap'); // the next refresh tries the outbox
+  const p1 = item((await ana.review()).review, 'p1');
+  const outbox = (await ana.get('/api/roadmap')).feature_outbox;
+  assert.ok(!outbox.some((e) => e.project_id === 'music-room'), 'no hidden project entry is left in the outbox');
+  assert.equal(p1.published, null);
+  assert.equal(p1.result.outcome, 'conflict');
+  assert.match(p1.result.message, /created by someone else/);
+  assert.match(repoFile('projects/music-room.yaml'), /Someone else/, 'nothing overwritten');
+});
+
+test('a project put into the existing one: its features go there, and once they are published the review is done', async () => {
+  const id = analysis([
+    { ref: 'p1', level: 'project', name: 'Reading', owner: 'Catalog team', possible_duplicate: { id: 'reading', name: 'Reading app', kind: 'project' } },
+    { ref: 'f1', level: 'feature', name: 'Shelf sharing', parent: 'p1', owner: 'Catalog team' },
+    { ref: 's1', level: 'step', name: 'Share pages', parent: 'f1', owner: '@shelf-dev', done_when: 'pages live' },
+  ]);
+  await ana.start(id);
+  await ana.edit({ p1: { duplicate_choice: 'merge' } });
+  const checked = (await ana.check()).body;
+  assert.equal(item(checked.review, 'p1').check.state, 'merged');
+  assert.equal(checked.ready, 1, 'only the feature is a file to publish');
+  const r = await ana.approve();
+  assert.deepEqual(r.body.results.map((x) => [x.kind, x.id, x.outcome]), [['feature', 'shelf-sharing', 'published']]);
+  assert.match(repoFile('features/shelf-sharing.yaml'), /^project: reading$/m);
+  assert.equal(repoFile('projects/reading.yaml'), 'id: reading\nname: Reading app\nowner: Catalog team\n', 'the existing project is not touched');
+  assert.deepEqual(item(r.body.review, 'p1').published, { ...item(r.body.review, 'p1').published, kind: 'project', op: 'merge', id: 'reading' });
+  assert.ok(r.body.review.items.every((it) => it.published), 'nothing left to publish');
+  const next = await ana.post('/api/import/review', { analysis_id: analysis([{ ref: 'f9', level: 'feature', name: 'Other' }]) });
+  assert.equal(next.body.outcome, 'started', 'a new review does not ask to replace a finished one');
+});
+
+test('a feature added to an existing one with no step left to add needs a fix, instead of failing at Approve', async () => {
+  const id = analysis([
+    { ref: 'f1', level: 'feature', name: 'Checkout again', owner: 'Payments team', possible_duplicate: { id: 'checkout', name: 'Checkout', kind: 'feature' } },
+    { ref: 's1', level: 'step', name: 'Pay later', parent: 'f1', owner: '@pay-dev', done_when: 'live' },
+  ]);
+  await ana.start(id);
+  await ana.edit({ f1: { duplicate_choice: 'merge' }, s1: { included: false } });
+  const checked = (await ana.check()).body;
+  assert.equal(item(checked.review, 'f1').check.state, 'invalid');
+  assert.match(item(checked.review, 'f1').check.errors[0].message, /nothing to add to the existing feature Checkout/);
+  assert.equal(checked.ready, 0);
+});
+
+test('a feature whose new project is not ready is not ready either, and Approve publishes nothing', async () => {
+  const id = analysis([
+    { ref: 'p1', level: 'project', name: 'Reading two', owner: 'Catalog team', possible_duplicate: { id: 'reading', name: 'Reading app', kind: 'project' } },
+    { ref: 'f1', level: 'feature', name: 'Reading goals', parent: 'p1', owner: 'Catalog team' },
+    { ref: 's1', level: 'step', name: 'Goal API', parent: 'f1', owner: '@goal-dev', done_when: 'live' },
+  ]);
+  await ana.start(id);
+  const checked = (await ana.check()).body;
+  assert.equal(item(checked.review, 'f1').check.state, 'invalid');
+  assert.match(item(checked.review, 'f1').check.errors.find((e) => e.field === 'parent').message, /new project "Reading two" can't be created yet/);
+  assert.equal(checked.ready, 0);
+  const commits = gh.state.commits.length;
+  const r = await ana.approve();
+  assert.deepEqual(r.body.results, []);
+  assert.equal(gh.state.commits.slice(commits).filter((c) => /^(features|projects)\//.test(c.path)).length, 0);
 });
 
 test('a person with read-only access sees Approve refused, with the reason', async () => {

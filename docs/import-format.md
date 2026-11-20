@@ -125,14 +125,17 @@ stay in the review, unpublished) and `duplicate_choice` (`skip`, `create` or `me
   of its steps (one file, not two). Children of an excluded or skipped item are not imported either.
 - A task is a PR, issue or ticket linked to a step (docs/terminology.md): its evidence goes on its step.
 - `merge` on a feature adds its steps and their evidence to the existing feature (one edit of that
-  file, no new file); on a project, its features go into the existing project.
+  file, no new file); a merged feature with no step left to add is an error (nothing to publish). On a
+  project, its features go into the existing project: the project item shows `merged` and is marked
+  published once its features are.
 
 **Check** compiles the review into the drafts the New feature form sends (`src/import/approve.js`) and
 runs the same validation and AI product review (`src/features/review.js`) on each, against the defined
 features and projects plus the proposed ones. Each item gets `check: {state, errors, findings, reason,
 review_note, review_ran}`; `state` is `ready`, `invalid` (an error, shown on its field), `blocked` (an
-AI contradiction), `excluded` or `skipped`. Ambiguities are shown as suggestions and don't block. A
-step or task is ready when the feature it lands in is. Without a reachable AI provider the review is
+AI contradiction), `excluded`, `skipped` or `merged`. Ambiguities are shown as suggestions and don't block. A
+step or task is ready when the feature it lands in is. A new feature is not ready while its new project,
+or a proposed feature it depends on, is not ready (the error is on its `parent` or `depends_on`). Without a reachable AI provider the review is
 reported as not run and valid items are ready. `plan` lists the files Approve would write.
 
 **Approve** (write access to LifeCycle-Data only; otherwise 403 `read_only` with the reason) refreshes
@@ -140,9 +143,13 @@ the definitions, checks again, then publishes the ready items through the featur
 (`src/features/publish.js`): new projects first, then new features in dependency order, then additions
 to existing features; one commit per file under the person's GitHub identity ("from LifeCycle import"),
 with the conflict check. When the shared repo can't be reached they wait in the local outbox (projects
-too) and publish on a later refresh, in order. Each item gets `published: {kind, op, id, queued, at}`
+too) and publish on a later refresh, in order. Each item gets `published: {kind, op, id, queued, key, at}`
 or, when it failed, `result: {outcome, message, errors}` and stays in the review to fix and approve
-again. `last_approval.results` lists each file with its outcome and a link to its page.
+again. `last_approval.results` lists each file with its outcome and a link to its page. A queued item
+follows its outbox entry (`key`): once the entry is gone it is published; if the entry ends in a
+conflict or failure, the entry is dropped and the item is back in the review with the error.
+While a check or approve runs, edits, discard and starting another review are refused (409 `busy`), and
+the screen locks the fields.
 
 ## API: review (local only)
 

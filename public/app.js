@@ -539,8 +539,8 @@ function importOutHtml(job) {
 // The review is saved on this machine as it is edited, so leaving the screen or reloading keeps it.
 // Approve publishes what is ready through the same path as the New feature form.
 let importReview = null; // { review, fresh, ready, access, busy, loaded, saving, timer, error }
-const IMP_STATE = { ready: 'Ready', invalid: 'Needs a fix', blocked: 'Blocked', excluded: 'Not imported', skipped: 'Skipped', published: 'Published', queued: 'Waiting for the repo' };
-const IMP_STATE_CLS = { ready: 'st-done', invalid: 'st-blocked', blocked: 'st-blocked', excluded: 'st-unavailable', skipped: 'st-unavailable', published: 'st-done', queued: 'st-in_progress' };
+const IMP_STATE = { ready: 'Ready', invalid: 'Needs a fix', blocked: 'Blocked', excluded: 'Not imported', skipped: 'Skipped', published: 'Published', queued: 'Waiting for the repo', merged: 'Into the existing project' };
+const IMP_STATE_CLS = { ready: 'st-done', invalid: 'st-blocked', blocked: 'st-blocked', excluded: 'st-unavailable', skipped: 'st-unavailable', published: 'st-done', queued: 'st-in_progress', merged: 'st-unavailable' };
 const IMP_FIELD = { name: 'Name', id: 'Id', owner: 'Owner', team: 'Team', description: 'Description', parent: 'Parent', target_date: 'Target date', depends_on: 'Depends on',
   done_when: 'Done when', evidence: 'Evidence', duplicate_choice: 'Possible duplicate', steps: 'Steps', level: 'Level' };
 const IMP_EDIT = ['level', 'name', 'id', 'description', 'parent', 'owner', 'team', 'target_date', 'depends_on', 'done_when', 'evidence', 'included', 'duplicate_choice'];
@@ -560,13 +560,17 @@ function impState(it) {
   return it.check?.state || null;
 }
 
-// "PR owner/repo#12", "issue owner/repo#3" or "ABC-123" typed or pasted → evidence, or null.
+// A GitHub PR or issue link, "owner/repo#12" (a PR; "issue owner/repo#3" for an issue, "PR …" is
+// fine too), or a Jira key or link ("ABC-123", any case) typed or pasted → evidence, or null.
 function impParseEvidence(text) {
   const t = String(text || '').trim();
   const gh = t.match(/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/(\d+)/i);
-  if (gh) return { source: 'github', type: gh[2].toLowerCase() === 'pull' ? 'pr' : 'issue', repo: gh[1], number: Number(gh[3]) };
-  const jira = t.match(/(?:browse\/)?([A-Z][A-Z0-9]+-\d+)\b/);
-  if (jira) return { source: 'jira', type: 'ticket', key: jira[1] };
+  if (gh) return Number(gh[3]) > 0 ? { source: 'github', type: gh[2].toLowerCase() === 'pull' ? 'pr' : 'issue', repo: gh[1], number: Number(gh[3]) } : null;
+  const short = t.match(/^(?:(pr|pull|issue)\s+)?([\w.-]+\/[\w.-]+)#(\d+)$/i);
+  if (short) return Number(short[3]) > 0 ? { source: 'github', type: /^issue$/i.test(short[1] || '') ? 'issue' : 'pr', repo: short[2], number: Number(short[3]) } : null;
+  const jira = t.match(/^(?:\S*\/browse\/)?([A-Za-z][A-Za-z0-9_]*-\d+)$/);
+  const key = jira?.[1].toUpperCase();
+  if (key && JIRA_KEY.test(key)) return { source: 'jira', type: 'ticket', key };
   return null;
 }
 
@@ -663,6 +667,7 @@ function importReviewHtml() {
   const kidsOf = (ref) => items.filter((i) => i.parent === ref);
   const roots = items.filter((i) => !i.parent || !refs.has(i.parent));
   const ro = s.access && !s.access.can_edit;
+  const lock = ro || Boolean(s.busy); // nothing changes while a check or approve runs
   const left = items.filter((i) => i.included && !i.published).length;
   const ready = s.fresh ? s.ready : 0;
   const plan = (r.plan || []).filter((p) => p.ready);
@@ -681,7 +686,7 @@ function importReviewHtml() {
     </div>
     ${s.fresh && plan.length ? `<p class="small">Approve will ${plan.map((p) => (p.kind === 'project' ? `create the project <b>${esc(p.name)}</b>` : p.op === 'update' ? `add ${esc((p.added_steps || []).join(', ') || 'steps')} to <b>${esc(p.name)}</b>` : `create the feature <b>${esc(p.name)}</b>`)).join('; ')}.</p>` : ''}
     ${impResultsHtml(r.last_approval)}
-    <form class="cform" id="imp-review-form" onsubmit="return false"><ul class="imp-tree imp-root">${roots.map((i) => impItemEditor(i, items, kidsOf, ro)).join('')}</ul></form>
+    <form class="cform" id="imp-review-form" onsubmit="return false"><ul class="imp-tree imp-root">${roots.map((i) => impItemEditor(i, items, kidsOf, lock)).join('')}</ul></form>
   </section>`;
 }
 
@@ -770,7 +775,7 @@ function wireReview(root) {
     const input = el.closest('.imp-ev')?.querySelector('[data-ev-new]');
     if (!it || !input) return;
     const e = impParseEvidence(input.value);
-    if (!e) { toast('Paste a GitHub PR or issue link (github.com/owner/repo/pull/12) or a Jira key (ABC-123).', true); return; }
+    if (!e) { toast('Paste a GitHub PR or issue link (github.com/owner/repo/pull/12), owner/repo#12, or a Jira key (ABC-123).', true); return; }
     it.evidence = [...it.evidence.filter((x) => impEvidence(x) !== impEvidence(e)), e];
     saveReview(true);
   };

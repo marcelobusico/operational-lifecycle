@@ -105,3 +105,60 @@ test('check: a contradiction blocks its item; an ambiguity is a suggestion', asy
   assert.equal(it('f1').state, 'ready');
   assert.equal(it('f1').findings[0].kind, 'ambiguity');
 });
+
+test('a new feature is not ready while its new project, or a proposed feature it depends on, is not', async () => {
+  const p = proposal();
+  p.items[0].possible_duplicate = { id: 'payments', name: 'Payments', kind: 'project' }; // no choice yet: the project is not ready
+  p.items.push({ ref: 'f4', level: 'feature', name: 'Gift cards', parent: null, owner: 'bo', evidence: [], source_links: [], level_reason: '', possible_duplicate: null },
+    { ref: 's4', level: 'step', name: 'Cards', parent: 'f4', owner: 'bo', done_when: 'sold', evidence: [], source_links: [], level_reason: '', possible_duplicate: null });
+  const r = createReview(p);
+  applyEdits(r, [{ ref: 'f3', duplicate_choice: 'skip' }, { ref: 'f4', depends_on: ['ref:f1'] }]);
+  const reviewed = [];
+  const c = await checkReview(r, defs(), async (built) => { reviewed.push(built.feature.id); return { ran: true, findings: [], blocking: false, note: 'ok' }; });
+  const it = (ref) => r.items.find((x) => x.ref === ref).check;
+  assert.equal(it('p1').state, 'invalid');
+  assert.equal(it('f1').state, 'invalid');
+  assert.match(it('f1').errors.find((e) => e.field === 'parent').message, /new project "Wallet" can't be created yet/);
+  assert.equal(it('s1').state, 'invalid', 'its steps wait too');
+  assert.equal(it('f4').state, 'invalid', 'a feature depending on it waits too');
+  assert.match(it('f4').errors.find((e) => e.field === 'depends_on').message, /"Top up", which can't be published yet/);
+  assert.deepEqual(c.features.filter((u) => u.ready), []);
+  assert.ok(!reviewed.includes('top-up'), 'no AI review for a feature that is waiting on its project');
+});
+
+test('a project put into the existing one shows as merged, not as needing a fix', async () => {
+  const p = proposal();
+  p.items[0].possible_duplicate = { id: 'payments', name: 'Payments', kind: 'project' };
+  const r = createReview(p);
+  applyEdits(r, [{ ref: 'p1', duplicate_choice: 'merge' }, { ref: 'f3', duplicate_choice: 'skip' }]);
+  const c = await checkReview(r, defs(), async () => ({ ran: false, findings: [], blocking: false, note: 'did not run' }));
+  const p1 = r.items.find((x) => x.ref === 'p1').check;
+  assert.equal(p1.state, 'merged');
+  assert.match(p1.reason, /existing project Payments/);
+  assert.equal(c.features.find((u) => u.id === 'top-up').draft.project, 'payments');
+  assert.equal(r.items.find((x) => x.ref === 'f1').check.state, 'ready');
+});
+
+test('"add to existing" with no step left to add is an error on the feature, not a file to publish', () => {
+  const r = createReview(proposal());
+  applyEdits(r, [{ ref: 'f3', duplicate_choice: 'merge' }, { ref: 's3', included: false }]);
+  const c = compileReview(r, defs());
+  assert.ok(!c.features.some((u) => u.op === 'update'));
+  assert.match(c.problems.get('f3')[0].message, /nothing to add to the existing feature Checkout/);
+});
+
+test('the evidence box takes GitHub links, owner/repo#n (PR, or issue with "issue"), and Jira keys in any case', async () => {
+  const fs = await import('node:fs');
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const src = js.slice(js.indexOf('function impParseEvidence'), js.indexOf('const impMsgs'));
+  const jiraKey = js.match(/^const JIRA_KEY = (.*);$/m)[1];
+  const parse = new Function(`const JIRA_KEY = ${jiraKey}; ${src}; return impParseEvidence;`)();
+  assert.deepEqual(parse('https://github.com/acme/api/pull/12'), { source: 'github', type: 'pr', repo: 'acme/api', number: 12 });
+  assert.deepEqual(parse('acme/api#42'), { source: 'github', type: 'pr', repo: 'acme/api', number: 42 });
+  assert.deepEqual(parse('PR acme/api#42'), { source: 'github', type: 'pr', repo: 'acme/api', number: 42 });
+  assert.deepEqual(parse('issue acme/api#3'), { source: 'github', type: 'issue', repo: 'acme/api', number: 3 });
+  assert.deepEqual(parse('abc-123'), { source: 'jira', type: 'ticket', key: 'ABC-123' });
+  assert.deepEqual(parse('https://acme.atlassian.net/browse/ops-7'), { source: 'jira', type: 'ticket', key: 'OPS-7' });
+  assert.equal(parse('acme/api#0'), null);
+  assert.equal(parse('hello world'), null);
+});
