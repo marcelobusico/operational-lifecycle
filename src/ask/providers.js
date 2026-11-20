@@ -75,6 +75,37 @@ export const REVIEW_SCHEMA = {
   additionalProperties: false,
 };
 
+// Import from links (src/import/analyze.js): the proposed projects, features, steps and tasks.
+export const IMPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string' },
+          level: { type: 'string', enum: ['project', 'feature', 'step', 'task'] },
+          name: { type: 'string' },
+          description: { type: 'string' },
+          parent: { type: 'string' },
+          owner: { type: 'string' },
+          done_when: { type: 'string' },
+          evidence: { type: 'array', items: { type: 'string' } },
+          sources: { type: 'array', items: { type: 'string' } },
+          level_reason: { type: 'string' },
+        },
+        required: ['ref', 'level', 'name', 'description', 'parent', 'owner', 'done_when', 'evidence', 'sources', 'level_reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['items'],
+  additionalProperties: false,
+};
+// An analysis reads many sources and writes a long answer: more room and time than a chat answer.
+const ANALYZE = { maxTokens: 16000, minTimeoutMs: 180000 };
+
 function interpretPrompt({ question, features }) {
   return `Defined features (id: name):\n${features.map((f) => `${f.id}: ${f.name}`).join('\n')}\n\nQuestion: ${question}`;
 }
@@ -109,22 +140,22 @@ function claudeProvider(config) {
     client ||= new Anthropic({ apiKey: key, baseURL: config.ai.apiUrl || undefined, timeout: config.ai.timeoutMs, maxRetries: 1 });
     return client;
   };
-  async function call(system, user, schema) {
+  async function call(system, user, schema, { maxTokens = 4000, timeoutMs = null } = {}) {
     const res = await getClient().beta.messages.create({
       model,
-      max_tokens: 4000,
+      max_tokens: maxTokens,
       // If a safety classifier declines, Anthropic re-runs the request on its recommended fallback.
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       output_config: { effort: 'low', format: { type: 'json_schema', schema } },
       system,
       messages: [{ role: 'user', content: user }],
-    });
+    }, timeoutMs ? { timeout: timeoutMs } : undefined);
     if (res.stop_reason === 'refusal') throw new Error('Claude declined to answer');
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
     return parseJson(text);
   }
-  const guarded = (system, user, schema) => call(system, user, schema).catch((err) => {
+  const guarded = (system, user, schema, opts) => call(system, user, schema, opts).catch((err) => {
     if (err?.status === 401) throw new Error(KEY_REJECTED('Anthropic'));
     throw err;
   });
@@ -134,6 +165,7 @@ function claudeProvider(config) {
     interpret: (input) => guarded(INTERPRET_SYSTEM, interpretPrompt(input), INTERPRET_SCHEMA),
     lead: (input) => guarded(LEAD_SYSTEM, leadPrompt(input), LEAD_SCHEMA),
     review: ({ system, prompt }) => guarded(system, prompt, REVIEW_SCHEMA),
+    analyze: ({ system, prompt }) => guarded(system, prompt, IMPORT_SCHEMA, { maxTokens: ANALYZE.maxTokens, timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs) }),
   };
 }
 
@@ -141,14 +173,14 @@ function openAiCompatibleProvider(config, { fetchImpl = fetch } = {}) {
   const model = config.ai.model;
   const key = aiKey('openai-compatible');
   registerSecret(key);
-  async function call(system, user) {
+  async function call(system, user, { timeoutMs = config.ai.timeoutMs } = {}) {
     if (!config.ai.apiUrl) throw new Error('ai.apiUrl is not set for the openai-compatible provider');
     if (!model) throw new Error('ai.model is not set for the openai-compatible provider');
     const res = await fetchImpl(`${config.ai.apiUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify({ model, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
-      signal: AbortSignal.timeout(config.ai.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 401) throw new Error(KEY_REJECTED('The AI provider'));
     if (!res.ok) throw new Error(`the provider answered HTTP ${res.status}`);
@@ -161,17 +193,18 @@ function openAiCompatibleProvider(config, { fetchImpl = fetch } = {}) {
     interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
     lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
     review: ({ system, prompt }) => call(system, prompt),
+    analyze: ({ system, prompt }) => call(system, prompt, { timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs) }),
   };
 }
 
 function commandProvider(config) {
   const cmd = Array.isArray(config.ai.command) ? config.ai.command : null;
-  function call(system, user) {
+  function call(system, user, { timeoutMs = config.ai.timeoutMs } = {}) {
     if (!cmd?.length) return Promise.reject(new Error('ai.command is not set (e.g. ["claude", "-p"])'));
     return new Promise((resolve, reject) => {
       const child = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
       let out = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error('the command timed out')); }, config.ai.timeoutMs);
+      const timer = setTimeout(() => { child.kill(); reject(new Error('the command timed out')); }, timeoutMs);
       child.stdout.on('data', (d) => { out += d; });
       child.on('error', (err) => { clearTimeout(timer); reject(new Error(`could not run ${cmd[0]}: ${err.message}`)); });
       child.on('close', (code) => {
@@ -188,6 +221,7 @@ function commandProvider(config) {
     interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
     lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
     review: ({ system, prompt }) => call(system, prompt),
+    analyze: ({ system, prompt }) => call(system, prompt, { timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs) }),
   };
 }
 
@@ -196,13 +230,14 @@ function commandProvider(config) {
 function claudeCodeProvider(config, { run = runClaude } = {}) {
   const cfg = { command: Array.isArray(config.ai.command) && config.ai.command.length ? config.ai.command : ['claude', '-p'],
     timeoutMs: Math.max(config.ai.timeoutMs || 0, 120000) };
-  const call = async (system, user) => parseJson(await run(cfg, `${system}\n\n${user}`, { what: 'the AI answer', noTools: true, model: config.ai.model || null }));
+  const call = async (system, user, c = cfg) => parseJson(await run(c, `${system}\n\n${user}`, { what: 'the AI answer', noTools: true, model: config.ai.model || null }));
   return {
     name: 'claude-code',
     model: config.ai.model || 'Claude Code default',
     interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
     lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
     review: ({ system, prompt }) => call(system, prompt),
+    analyze: ({ system, prompt }) => call(system, prompt, { ...cfg, timeoutMs: Math.max(cfg.timeoutMs, ANALYZE.minTimeoutMs) }),
   };
 }
 

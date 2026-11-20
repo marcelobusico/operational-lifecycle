@@ -296,5 +296,8 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
     return r;
   }
 
-  return { refresh, latest, config, publisher, featurePublisher, teamPublisher, submitTeamEdit, definitionsNow };
+  // Read-only GitHub access for Import from links (src/import): every call is a GET, whatever is asked.
+  const githubRead = (route, opts = {}) => client.request(route, { accept: opts.accept, what: opts.what, method: 'GET' });
+
+  return { refresh, latest, config, publisher, featurePublisher, teamPublisher, submitTeamEdit, definitionsNow, githubRead, jiraRun };
 }

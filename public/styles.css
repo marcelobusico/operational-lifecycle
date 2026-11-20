@@ -1663,3 +1663,31 @@ a, a:hover, a:focus, a:focus-visible, a:visited, .linkbtn, .linkbtn:hover, .link
 .fold-card[open] .ramp-chev { transform: rotate(90deg); }
 .fold-card:not([open]) > summary { border-bottom: 0; }
 .f-two { align-items: start; }
+
+/* Import from links (#/import): recognized links, reading progress, sources and the proposal tree. */
+.imp-links { list-style: none; padding: 0; margin: 4px 0 0; display: grid; gap: 6px; }
+.imp-links li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
+.imp-kind { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 550;
+  border: 1px solid var(--border); background: var(--muted); color: var(--foreground); white-space: nowrap; }
+.imp-lbl { overflow-wrap: anywhere; }
+.imp-why { flex: 1 1 100%; color: var(--muted-foreground); font-size: 12.5px; }
+.imp-bad .imp-kind { --s: var(--warning); color: var(--s); background: color-mix(in srgb, var(--s) var(--tint), transparent); border-color: color-mix(in srgb, var(--s) 30%, transparent); }
+.imp-prog .upd-steps li { align-items: baseline; }
+.imp-prog .upd-steps li.imp-fail { color: var(--destructive); }
+.imp-prog .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--primary); animation: spin 1s linear infinite; flex: none; align-self: center; }
+.imp-prog .pend { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); flex: none; align-self: center; }
+@media (prefers-reduced-motion: reduce) { .imp-prog .spin { animation: none; } }
+.imp-sources h3 { font-size: 13px; margin: 14px 0 4px; }
+.imp-sources ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.imp-failed .imp-reason { color: var(--destructive); }
+.imp-tree { list-style: none; margin: 8px 0 0; padding-left: 18px; border-left: 2px solid var(--border); display: grid; gap: 10px; }
+.imp-tree.imp-root { padding-left: 0; border-left: 0; }
+.imp-item > p { margin: 4px 0 0; }
+.imp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.imp-lv { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 4px; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em;
+  background: var(--muted); color: var(--muted-foreground); }
+.lv-project > .imp-row .imp-lv, .lv-feature > .imp-row .imp-lv { background: color-mix(in srgb, var(--primary) 14%, transparent); color: var(--primary); }
+.imp-desc { color: var(--foreground); max-width: 80ch; }
+.imp-reason-lv { color: var(--muted-foreground); }
+.imp-dup { --s: var(--warning); padding: 6px 10px; border-radius: var(--radius); font-size: 13px; background: color-mix(in srgb, var(--s) var(--tint), transparent); border: 1px solid color-mix(in srgb, var(--s) 30%, transparent); }
+.imp-ro { margin-top: 16px; }

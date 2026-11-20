@@ -13,6 +13,12 @@ function reply(system, user, state) {
     const m = user.match(/^\s*(?:- )?.*done_when: .*CONTRADICTION.*$/m);
     return { findings: m ? [{ kind: 'contradiction', field: 'steps[0].done_when', message: 'The done_when contradicts the step order.', suggestion: 'Reword it.' }] : [] };
   }
+  // Import from links: the test sets state.importReply (a function of the prompt, or a value).
+  if (system.includes('turn plans written in Jira')) {
+    state.importPrompts.push(user);
+    const r = typeof state.importReply === 'function' ? state.importReply(user) : state.importReply;
+    return r || { items: [] };
+  }
   if (system.includes('route questions')) {
     const question = user.split('Question: ').pop().trim();
     return { intent: ruleIntent(question), mention: extractMention(question) };
@@ -23,7 +29,7 @@ function reply(system, user, state) {
 }
 
 export function startFakeAi(kind) {
-  const state = { requests: [], down: false, reviewFindings: null };
+  const state = { requests: [], down: false, reviewFindings: null, importReply: null, importPrompts: [] };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (d) => { raw += d; });

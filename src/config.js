@@ -81,6 +81,9 @@ export const DEFAULTS = {
   },
   // The alert list (lifecycle.alerts/v1) from the alerts work: a local file path or an http(s) URL.
   alerts: { source: null },
+  // Import from links (src/import, docs/import-format.md): how much one analysis reads per source.
+  // Anything beyond a cap is skipped and the result says what was left out.
+  import: { maxStoriesPerEpic: 25, maxPrsPerRepo: 20, maxIssuesPerRepo: 20, maxDocsPerRepo: 10, maxCharsPerSource: 20000 },
   // Delay warnings: a feature is warned when days left < open steps x daysPerStep.
   delay: { daysPerStep: 3 },
   // Ask & digest. provider: claude (default) | openai-compatible | command | none. The provider's
@@ -168,6 +171,7 @@ export function loadConfig() {
       jira: { ...DEFAULTS.sources.jira, ...(saved.sources?.jira || {}) },
     },
     alerts: { ...DEFAULTS.alerts, ...(saved.alerts || {}) },
+    import: { ...DEFAULTS.import, ...(saved.import || {}) },
     delay: { ...DEFAULTS.delay, ...(saved.delay || {}) },
     ai: { ...DEFAULTS.ai, ...(saved.ai || {}) },
     me: { ...DEFAULTS.me, ...(saved.me || {}) },

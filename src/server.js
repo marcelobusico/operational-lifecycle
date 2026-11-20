@@ -18,6 +18,7 @@ import { createUpdater } from './update/upgrade.js';
 import { installInfo } from './update/install.js';
 import { publishProject, deleteProject, updateProject } from './projects/create.js';
 import { createAppDefinition, updateAppDefinition, deleteAppDefinition } from './apps/edit.js';
+import { createImportService } from './import/service.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -71,7 +72,8 @@ export function createUpdateService(options = {}) {
 
 const LOCAL_DEFINITION =/^(features|projects|services|teams|changes)\/[a-z0-9][a-z0-9-]*\.ya?ml$/;
 
-export function createServer(app = createApp(), ask = createAskService({ app }), update = createUpdateService()) {
+export function createServer(app = createApp(), ask = createAskService({ app }), update = createUpdateService(),
+  importer = createImportService({ app, providerNow: () => ask.currentProvider() })) {
   // AI product reviews by definition text, so "Review changes" then "Publish" asks the AI once.
   const reviews = new Map();
   async function review(built, defs) {
@@ -119,6 +121,23 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
           leave_unowned: body.leave_unowned === true, confirm_unowned: body.confirm_unowned === true });
         return send(res, r.outcome === 'cancelled' ? 200 : TEAM_STATUS[r.outcome] || 200, r);
       }
+      // Import from links (src/import, docs/import-format.md): recognize the links, then analyze them in
+      // the background into a read-only proposal. Nothing here writes to LifeCycle-Data, Jira or GitHub.
+      if (req.method === 'POST' && url.pathname === '/api/import/links') {
+        const body = await readBody(req);
+        return send(res, 200, { links: importer.links(typeof body.text === 'string' ? body.text : ''), ai: importer.availability() });
+      }
+      if (req.method === 'POST' && url.pathname === '/api/import/analyze') {
+        const body = await readBody(req);
+        const r = importer.start(typeof body.text === 'string' ? body.text : '');
+        return send(res, r.outcome === 'started' ? 202 : r.outcome === 'running' ? 409 : r.outcome === 'no_ai' ? 503 : 400, r);
+      }
+      const imp = url.pathname.match(/^\/api\/import\/analyze\/([a-f0-9]{16})$/);
+      if (req.method === 'GET' && imp) {
+        const job = importer.progress(imp[1]);
+        return job ? send(res, 200, job) : send(res, 404, { error: 'no such analysis (they are kept only while LifeCycle runs)' });
+      }
+      if (req.method === 'GET' && url.pathname === '/api/import/ai') return send(res, 200, importer.availability());
       if (req.method === 'POST' && url.pathname === '/api/digest') {
         await readBody(req);
         return send(res, 200, await ask.digest({ via: 'app' }));

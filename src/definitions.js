@@ -15,7 +15,7 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // The app stores LifeCycle knows how to name. Which ones it can read is src/stores/index.js's business.
 export const STORES = ['app_store', 'google_play'];
-const JIRA_KEY = /^[A-Z][A-Z0-9_]{0,29}-[1-9]\d{0,9}$/;
+export const JIRA_KEY = /^[A-Z][A-Z0-9_]{0,29}-[1-9]\d{0,9}$/;
 export const PLATFORMS = ['ios', 'android'];
 const VERSION = /^\d+(\.\d+){0,3}$/;
 // Reading the files (pinned to one commit) lives in src/data-source.js.

@@ -412,6 +412,14 @@ through the same publish path as the form.
 LifeCycle-Data. After it merges, everyone sees
 it on their next Refresh View.
 
+**From existing plans**: on the *Roadmap*, **Import from links** takes links to Jira epics and stories
+and to GitHub repositories, PRs, issues or single files. Each link shows its type as you paste it;
+**Analyze** reads them (never source code) and the AI provider set up for Ask proposes projects,
+features, steps and tasks, each with the reason for its level, the tickets and PRs that back it,
+and a warning when it looks like a feature that already exists. The screen lists what was read, what
+failed and why, and what the read limits left out. It only proposes: nothing is added to
+LifeCycle-Data, Jira or GitHub. Details: [docs/import-format.md](docs/import-format.md).
+
 ## Status for other tools
 
 ```bash
