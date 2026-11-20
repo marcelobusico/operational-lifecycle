@@ -18,7 +18,8 @@ import { readJiraSources, importJiraPrompt } from '../src/import/read-jira.js';
 import { normalizeProposal, analyzeSystem, analyzePrompt } from '../src/import/analyze.js';
 import { fileSplits, readGithubSource } from '../src/import/read-github.js';
 import { SourceError } from '../src/sources/github-client.js';
-import { NO_AI_MESSAGE, eachLimited } from '../src/import/service.js';
+import { NO_AI_MESSAGE, eachLimited, createImportService } from '../src/import/service.js';
+import { createProvider, looksCutOff } from '../src/ask/providers.js';
 
 const DATA = 'team/LifeCycle-Data';
 const REPO = 'team/catalog';
@@ -481,8 +482,82 @@ test('an AI answer cut off at the length limit says so and suggests fewer links;
     assert.equal(r.body.state, 'failed');
     assert.match(r.body.message, /couldn't finish the proposal: the answer was cut off at the AI provider's length limit.*Paste fewer links/);
     assert.equal(r.body.proposal, null);
-    assert.equal(ai.state.requests.at(-1).body.max_tokens, 20000);
+    assert.equal(ai.state.requests.at(-1).body.max_tokens, undefined, 'openai-compatible: no output limit unless ai.maxOutputTokens is set');
+    ai.state.cutOff = false;
+    p.config.ai = { ...p.config.ai, maxOutputTokens: 12000 };
+    const r2 = await p.analyze(`https://github.com/${REPO}`);
+    assert.equal(r2.body.state, 'done', r2.body.message);
+    assert.equal(ai.state.requests.at(-1).body.max_tokens, 12000);
   } finally { ai.state.cutOff = false; await p.close(); }
+});
+
+test('only the analysis says "paste fewer links": other answers cut off, and complete answers with broken JSON, keep their own error', async () => {
+  const answer = (content, finish = 'stop') => async () => new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: finish }] }), { status: 200 });
+  const provider = (fetchImpl) => createProvider({ ai: { ...DEFAULTS.ai, provider: 'openai-compatible', apiUrl: 'http://x/v1', model: 'm', timeoutMs: 1000 } }, { fetchImpl });
+  const cut = '{"findings": [{"kind": "contra';
+  await assert.rejects(provider(answer(cut, 'length')).review({ system: 's', prompt: 'p' }), (err) => !err.tooLong && !/Paste fewer links/.test(err.message));
+  await assert.rejects(provider(answer(cut, 'length')).analyze({ system: 's', prompt: 'p' }), (err) => err.tooLong === true);
+  await assert.rejects(provider(answer(cut)).analyze({ system: 's', prompt: 'p' }), (err) => err.tooLong === true, 'no stop reason, but the JSON ends early');
+  const broken = '{"items": [{"name": "The "big" one", "level": "feature"}]}';
+  await assert.rejects(provider(answer(broken)).analyze({ system: 's', prompt: 'p' }), (err) => !err.tooLong);
+  assert.equal(looksCutOff(broken), false);
+  assert.equal(looksCutOff('```json\n{"items": []}\n```'), false);
+  assert.equal(looksCutOff('{"items": [{"a": {"b": 1}}'), true, 'cut right after an inner object');
+});
+
+test('links past the 50th are not dropped silently: one entry says how many were left out', () => {
+  const links = parseLinks(Array.from({ length: 60 }, (_, i) => `RWD-${i + 1}`).join(' '));
+  assert.equal(links.length, 51);
+  assert.equal(links.filter((l) => l.status === 'ok').length, 50);
+  const last = links.at(-1);
+  assert.equal(last.status, 'unrecognized');
+  assert.match(last.label, /10 more links not taken/);
+  assert.match(last.reason, /at most 50 links.*another run/);
+});
+
+test('a Markdown link with parentheses in its URL keeps them; "_" and "." inside a name stay', () => {
+  const [file] = parseLinks('[plan](https://github.com/o/r/blob/main/docs/plan_(v2).md)');
+  assert.equal(file.path, 'docs/plan_(v2).md');
+  assert.deepEqual(parseLinks('github.com/o/my_repo_ (see https://github.com/o/r/pull/3), _https://github.com/o/emph_').filter((l) => l.repo).map((l) => l.repo),
+    ['o/my_repo_', 'o/r', 'o/emph']);
+});
+
+test('with a configured Jira site, a link to another site is read on the site it links to', async () => {
+  const run = fakeJira();
+  const r = await readJiraSources({ entries: parseLinks('https://other.atlassian.net/browse/RWD-1 OPS-7'), cfg: { ...DEFAULTS.sources.jira, siteUrl: SITE }, caps: DEFAULTS.import, run });
+  assert.equal(run.calls.length, 2);
+  assert.ok(run.calls.some((c) => /cloudId of https:\/\/other\.atlassian\.net/.test(c.prompt) && /Tickets: RWD-1$/m.test(c.prompt)));
+  assert.ok(run.calls.some((c) => /cloudId of https:\/\/acme\.atlassian\.net/.test(c.prompt) && /Tickets: OPS-7$/m.test(c.prompt)), 'a bare key goes to the configured site');
+  assert.ok(r.has('OPS-7'));
+});
+
+test('an analysis that stops marks unread links failed; a replaced analysis says so instead of "restarted"', async () => {
+  const fakeApp = { config: DEFAULTS, definitionsLast: () => null, jiraRun: null,
+    githubRead: async () => { throw new SourceError('not_found', 'no such repository', 404); } };
+  const providerNow = () => ({ name: 'fake', analyze: async () => ({ items: [] }) });
+  const broken = createImportService({ app: fakeApp, providerNow, configNow: () => { throw new Error('config unreadable'); } });
+  const b = broken.start('https://github.com/o/r');
+  await broken.settled(b.id);
+  const job = broken.progress(b.id);
+  assert.equal(job.state, 'failed');
+  assert.deepEqual(job.sources.map((x) => [x.status, x.reason]), [['failed', 'Not read: the analysis stopped before this link was read.']]);
+
+  const svc = createImportService({ app: fakeApp, providerNow });
+  const ids = [];
+  for (let i = 0; i < 6; i += 1) { const r = svc.start(`https://github.com/o/r${i}`); ids.push(r.id); await svc.settled(r.id); }
+  assert.equal(svc.progress(ids[0]), null);
+  assert.equal(svc.whyGone(ids[0]), 'replaced');
+  assert.equal(svc.whyGone('0123456789abcdef'), 'unknown');
+  const server = fs.readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  assert.match(server, /keeps only the last five, and newer ones took its place/);
+});
+
+test('the screen keeps following an analysis through an error answer instead of showing an empty result', () => {
+  const js = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const follow = js.slice(js.indexOf('function followImport'), js.indexOf('function leaveImport'));
+  assert.match(follow, /if \(!res\.ok \|\| !j\?\.state\)/);
+  assert.match(follow, /v\.error = j\?\.message/);
+  assert.doesNotMatch(follow, /LifeCycle was restarted/);
 });
 
 test('without a configured Jira site, tickets are read on the site of the pasted link (also *.jira.com), one run per site', async () => {

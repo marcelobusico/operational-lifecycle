@@ -558,10 +558,21 @@ function followImport(id) {
     if (importView !== v || !v.poll) return;
     if (res.status === 404) {
       clearInterval(v.poll); v.poll = null; v.job = null;
-      v.error = 'This analysis is no longer available (LifeCycle was restarted). Press Analyze again.';
+      v.error = j?.message || 'This analysis is no longer available. Press Analyze again.';
       if (parseRoute().route === 'import') render();
       return;
     }
+    // Any other error answer is not a result: keep following, and give up only after several in a row.
+    if (!res.ok || !j?.state) {
+      v.misses = (v.misses || 0) + 1;
+      if (v.misses >= 5) {
+        clearInterval(v.poll); v.poll = null;
+        v.error = `LifeCycle couldn't say how the analysis is going (${j?.error || `HTTP ${res.status}`}). Press Analyze to follow it again (a running analysis is picked up, not started twice).`;
+        if (parseRoute().route === 'import') render();
+      }
+      return;
+    }
+    v.misses = 0;
     v.job = j;
     if (j.state !== 'running') { clearInterval(v.poll); v.poll = null; if (parseRoute().route === 'import') render(); return; }
     const out = document.querySelector('#imp-out');

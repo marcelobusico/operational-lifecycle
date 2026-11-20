@@ -135,7 +135,11 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
       const imp = url.pathname.match(/^\/api\/import\/analyze\/([a-f0-9]{16})$/);
       if (req.method === 'GET' && imp) {
         const job = importer.progress(imp[1]);
-        return job ? send(res, 200, job) : send(res, 404, { error: 'no such analysis (they are kept only while LifeCycle runs)' });
+        if (job) return send(res, 200, job);
+        const why = importer.whyGone(imp[1]);
+        return send(res, 404, { error: 'no such analysis', reason: why,
+          message: why === 'replaced' ? 'This analysis is no longer kept: LifeCycle keeps only the last five, and newer ones took its place. Press Analyze again.'
+            : 'This analysis is no longer available: analyses are kept only while LifeCycle runs, so it was probably restarted. Press Analyze again.' });
       }
       if (req.method === 'GET' && url.pathname === '/api/import/ai') return send(res, 200, importer.availability());
       if (req.method === 'POST' && url.pathname === '/api/digest') {

@@ -88,13 +88,13 @@ const ticketText = (t) => [
 // entries: parsed links of kind jira. Returns Map(key → { status, reason, type, label, docs, evidence, left_out }).
 // docs: [{ origin, title, text }], what the analysis reads; evidence: the tickets that may back a step.
 //
-// The site: sources.jira.siteUrl when set; else the one in each pasted link (a bare key goes with the
-// only site pasted, if there is just one), so Claude never picks another site the account can see.
+// The site: the one in the pasted link; for a bare key, sources.jira.siteUrl when set, else the only
+// site pasted (if there is just one), so a link to another site is never read from the configured one.
 // One run per site.
 export async function readJiraSources({ entries, cfg, caps, run = runJira }) {
   const configured = normalizeSiteUrl(cfg.siteUrl);
   const pastedSites = [...new Set(entries.map((e) => normalizeSiteUrl(e.url)).filter(Boolean))];
-  const siteOf = (e) => configured || normalizeSiteUrl(e.url) || (pastedSites.length === 1 ? pastedSites[0] : null);
+  const siteOf = (e) => normalizeSiteUrl(e.url) || configured || (pastedSites.length === 1 ? pastedSites[0] : null);
   const groups = new Map();
   for (const e of entries) {
     const site = siteOf(e);

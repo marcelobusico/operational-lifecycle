@@ -13,7 +13,7 @@ proposal in memory on this machine. Nothing is added to LifeCycle-Data, Jira or 
 
 | Pasted | Kind | What is read |
 |---|---|---|
-| `https://<site>.atlassian.net/browse/ABC-123` (or `*.jira.com`), a board link with `?selectedIssue=ABC-123`, or `ABC-123` in capitals (lowercase `utf-8` or `covid-19` in pasted notes are not keys) | `jira` | The ticket, on the site in `sources.jira.siteUrl`, else on the site of the pasted link (a bare key goes with the only site pasted). An epic is read with the issues under it (`parent = KEY OR "Epic Link" = KEY`). |
+| `https://<site>.atlassian.net/browse/ABC-123` (or `*.jira.com`), a board link with `?selectedIssue=ABC-123`, or `ABC-123` in capitals (lowercase `utf-8` or `covid-19` in pasted notes are not keys) | `jira` | The ticket, on the site of the pasted link; a bare key is read on the site in `sources.jira.siteUrl`, else on the only site pasted. An epic is read with the issues under it (`parent = KEY OR "Epic Link" = KEY`). |
 | `https://github.com/owner/repo` or `github.com/owner/repo` (a bare `owner/repo` is not taken, so words like CI/CD in pasted notes aren't read as repositories) | `github_repo` | README, the Markdown/text files in `docs/`, and the most recently updated PRs and issues (open and closed). **Source code is never read.** |
 | `https://github.com/owner/repo/pull/12` | `github_pr` | That PR and its description. |
 | `https://github.com/owner/repo/issues/7` | `github_issue` | That issue and its description. |
@@ -22,11 +22,12 @@ proposal in memory on this machine. Nothing is added to LifeCycle-Data, Jira or 
 | anything else | `unrecognized` | Nothing: shown with the reason, never dropped silently. |
 
 Links can be pasted one per line, separated by spaces or commas, or inside text: Markdown links
-(`[Epic](https://…)`) give their URL, and punctuation around a link is not part of it. GitHub links
-are read three at a time, so a long paste doesn't trip GitHub's rate limit. If the AI's answer is cut
-off at the provider's length limit, the analysis fails with that reason and suggests fewer links.
+(`[Epic](https://…)`, parentheses inside the URL included) give their URL, and punctuation around a
+link is not part of it. GitHub links are read three at a time, so a long paste doesn't trip GitHub's
+rate limit. If the AI's answer is cut off at the provider's length limit, the analysis fails with that
+reason and suggests fewer links.
 
-At most 50 links per analysis. Jira is read on any machine with Claude Code signed in to Atlassian,
+At most 50 links per analysis; past that, one entry says how many more were not taken. Jira is read on any machine with Claude Code signed in to Atlassian,
 whether or not `sources.jira.enabled` is on; if that run fails, every Jira link shows as failed with the fix.
 
 ## Caps
@@ -47,6 +48,9 @@ The analysis uses the provider set up for Ask & digest (`ai.provider`, [ask-form
 `claude`, `claude-code`, `openai-compatible` or `command`. With `"none"`, the screen explains how to set
 one up, and nothing is read or proposed. The AI decides each item's level with the rule in
 [terminology.md](terminology.md) (never by Jira issue type) and says why in `level_reason`.
+Claude gets room for a 20,000-token answer. An `openai-compatible` provider gets an output limit only
+when `ai.maxOutputTokens` is set, since models differ (some cap lower, reasoning models refuse
+`max_tokens`); otherwise the model's own limit applies.
 
 ## Shape (`lifecycle.import-proposal/v1`)
 
@@ -96,7 +100,8 @@ so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full r
 - `POST /api/import/analyze {text}` → 202 `{outcome: "started", id}`; 409 `running` (one at a time);
   503 `no_ai`; 400 `no_links`.
 - `GET /api/import/analyze/<id>` → `{state: running|done|failed, phase: reading|analyzing|done|failed, sources, proposal, message}`.
-  Analyses are kept in memory (the last five) while LifeCycle runs.
+  Analyses are kept in memory (the last five) while LifeCycle runs. 404 `{reason: replaced|unknown, message}`:
+  `replaced` when newer analyses took its place, `unknown` otherwise (e.g. LifeCycle restarted).
 
 ## Adding a source type
 

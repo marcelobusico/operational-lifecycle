@@ -69,20 +69,43 @@ function one(input) {
   return unrecognized(input, 'Not a link, a Jira key (ABC-123) or a GitHub link (github.com/owner/repo).');
 }
 
+// Punctuation around a pasted word that isn't part of the link: quotes and brackets around it, sentence
+// punctuation after it, and Markdown emphasis (*x*, _x_, `x`). A ")" is kept when the link opened it
+// (docs/plan_(v2).md), and "_" or "*" only goes when the word also starts with it.
+function trimWord(word) {
+  let w = word.trim();
+  for (let prev = null; prev !== w;) {
+    prev = w;
+    const m = w.match(/^([*_`]+)(.*?)\1$/s);
+    if (m && m[2]) w = m[2];
+    w = w.replace(/^[<(["'`]+/, '').replace(/[>\]"'.;:!?`]+$/, '');
+    const opens = (w.match(/\(/g) || []).length;
+    if (w.endsWith(')') && (w.match(/\)/g) || []).length > opens) w = w.slice(0, -1);
+  }
+  return w;
+}
+
 // The text a person pasted → one entry per distinct link, in order. Separated by whitespace or commas.
-// Markdown links ([Epic](https://…)) give their URL; punctuation around a word is not part of it.
+// Markdown links ([Epic](https://…)) give their URL. Past MAX_LINKS, one entry says how many more were
+// not taken, so none goes missing without a word.
 export function parseLinks(text) {
-  const plain = String(text || '').replace(/\[([^\]\n]*)\]\((\S+?)\)/g, ' $2 ');
-  const words = plain.split(/[\s,]+/).map((w) => w.trim().replace(/^[<(["'*_`]+|[>)\]"'.;:!?*_`]+$/g, '')).filter(Boolean);
+  const plain = String(text || '').replace(/\[([^\]\n]*)\]\(((?:[^\s()]|\([^\s()]*\))+)\)/g, ' $2 ');
+  const words = plain.split(/[\s,]+/).map(trimWord).filter(Boolean);
   const seen = new Set();
   const out = [];
+  const over = new Set();
   for (const w of words) {
     const e = one(w);
     const id = linkId(e);
     if (seen.has(id)) continue;
     seen.add(id);
+    if (out.length >= MAX_LINKS) { over.add(id); continue; }
     out.push(e);
-    if (out.length >= MAX_LINKS) break;
+  }
+  if (over.size) {
+    const n = over.size;
+    out.push({ input: `(${n} more)`, kind: 'unrecognized', url: null, label: `${n} more ${n === 1 ? 'link' : 'links'} not taken`, status: 'unrecognized',
+      reason: `An analysis takes at most ${MAX_LINKS} links, so the last ${n === 1 ? 'one was' : `${n} were`} left out. Analyze ${n === 1 ? 'it' : 'them'} in another run.` });
   }
   return out;
 }

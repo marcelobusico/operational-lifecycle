@@ -17,6 +17,7 @@ export const NO_AI_MESSAGE = 'Analysis needs an AI provider, and none is set up 
 const UNKNOWN_AI = (name) => `Analysis needs an AI provider, and the one set up on this machine ("${name}") isn't one LifeCycle knows. `
   + 'Set ai.provider in ~/.lifecycle/config.json to claude, claude-code, openai-compatible or command, or run `lifecycle setup --extras`. Nothing was read and nothing is proposed.';
 const KEEP_JOBS = 5;
+const REMEMBER_GONE = 100;
 const GITHUB_AT_ONCE = 3;
 
 // fn on every item, at most `limit` running at a time.
@@ -31,6 +32,7 @@ export async function eachLimited(items, limit, fn) {
 // jiraRun / getGithub: replace the Claude Code run and the GitHub reads (tests).
 export function createImportService({ app, providerNow, configNow = () => app.config, jiraRun = app.jiraRun, getGithub = app.githubRead }) {
   const jobs = new Map();
+  const gone = new Set(); // ids of analyses dropped to keep only the last KEEP_JOBS
   let running = null;
 
   // Whether analysis can run, and if not, how to set it up.
@@ -116,10 +118,21 @@ export function createImportService({ app, providerNow, configNow = () => app.co
       sources: entries.map((e) => ({ id: linkId(e), input: e.input, kind: e.kind, label: e.label, url: e.url, status: e.status === 'ok' ? 'pending' : e.status, reason: e.reason, left_out: [], docs: [], evidence: [] })),
     };
     jobs.set(job.id, job);
-    while (jobs.size > KEEP_JOBS) jobs.delete(jobs.keys().next().value);
+    while (jobs.size > KEEP_JOBS) {
+      const old = jobs.keys().next().value;
+      jobs.delete(old);
+      gone.add(old);
+      if (gone.size > REMEMBER_GONE) gone.delete(gone.values().next().value);
+    }
     running = job;
     job.done = run(job, provider, entries)
-      .catch((err) => { job.state = 'failed'; job.phase = 'failed'; job.message = `The analysis stopped: ${redact(err.message)}`; })
+      .catch((err) => {
+        job.state = 'failed'; job.phase = 'failed'; job.message = `The analysis stopped: ${redact(err.message)}`;
+        // Sources still waiting or being read when it stopped were not read: say so on each.
+        for (const s of job.sources) {
+          if (s.status === 'pending' || s.status === 'reading') Object.assign(s, { status: 'failed', reason: 'Not read: the analysis stopped before this link was read.' });
+        }
+      })
       .finally(() => { job.finished_at = new Date().toISOString(); running = null; });
     return { outcome: 'started', id: job.id };
   }
@@ -129,6 +142,8 @@ export function createImportService({ app, providerNow, configNow = () => app.co
     availability,
     start,
     progress: (id) => (jobs.has(id) ? view(jobs.get(id)) : null),
+    // Why an analysis isn't there: 'replaced' (newer ones took its place) or 'unknown' (e.g. LifeCycle restarted).
+    whyGone: (id) => (gone.has(id) ? 'replaced' : 'unknown'),
     // Tests: wait for a job to end.
     settled: (id) => jobs.get(id)?.done || Promise.resolve(),
   };

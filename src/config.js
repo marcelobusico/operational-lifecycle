@@ -94,6 +94,7 @@ export const DEFAULTS = {
     apiUrl: null,      // null = the provider's default; openai-compatible needs it (e.g. http://localhost:11434/v1)
     command: null,     // provider "command": a local CLI that reads the prompt on stdin, e.g. ["claude", "-p"]
     timeoutMs: 30000,
+    maxOutputTokens: null, // openai-compatible, Import from links only: max_tokens to send (null = the model's own limit)
   },
   // Who you are, for "features I own" in the digest: the owner names you answer to in definitions
   // (a GitHub handle like "@example-dev" and/or a team like "Catalog team").
