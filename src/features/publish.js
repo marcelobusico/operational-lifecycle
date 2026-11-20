@@ -11,6 +11,8 @@
 //   - the write itself carries the file's sha, so a save landing in between is refused by GitHub too;
 //   - when the repo can't be reached the edit waits ("not published yet") and is published on a later
 //     refresh or retry.
+// A new project (`projects/<id>.yaml`, op create-project) goes through the same outbox, so an import
+// that adds a project and its features keeps them in order when the repo can't be reached.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,6 +22,7 @@ import { SourceError } from '../sources/github-client.js';
 import { logAlertEvent } from '../alerts/log.js';
 import { validateDefinition } from '../definitions.js';
 import { buildFeatureFile, dependentsOf } from './edit.js';
+import { buildProjectFile } from '../projects/create.js';
 
 export const textHash = (text) => crypto.createHash('sha256').update(String(text ?? '')).digest('hex').slice(0, 16);
 
@@ -34,7 +37,10 @@ export function listFeatureOutbox() {
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 }
 
-const LABEL = { create: 'Add feature', update: 'Edit feature', delete: 'Delete feature' };
+const LABEL = { create: 'Add feature', update: 'Edit feature', delete: 'Delete feature', 'create-project': 'Add project' };
+// Where the edit was made, as the commit says it.
+const FROM = { chat: 'from the LifeCycle chat', import: 'from LifeCycle import' };
+const subject = (entry) => entry.feature_id || entry.project_id;
 
 export function createFeaturePublisher({ config, github, whoAmI }) {
   const toRepo = !config.dataPath;
@@ -145,11 +151,11 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
   }
 
   const summary = (diff) => [...new Set((diff || []).map((d) => (d.field.startsWith('steps') ? 'steps' : d.field.startsWith('ramp_conditions') ? 'ramp conditions' : d.label.toLowerCase())))].join(', ');
-  // Where the edit was made: the form ("from LifeCycle") or the chat ("from the LifeCycle chat").
-  // The person's role is never written: their GitHub identity is the commit's author.
+  // Where the edit was made: the form ("from LifeCycle"), the chat ("from the LifeCycle chat") or an
+  // import ("from LifeCycle import"). The person's role is never written: their GitHub identity is the commit's author.
   const commitMessage = (entry, diff, by) => {
-    const from = entry.via === 'chat' ? 'from the LifeCycle chat' : 'from LifeCycle';
-    return `${LABEL[entry.op]} ${entry.feature_id}${entry.op === 'update' && diff?.length ? `: ${summary(diff)}` : ''} (by ${by} ${from})`;
+    const from = FROM[entry.via] || 'from LifeCycle';
+    return `${LABEL[entry.op]} ${subject(entry)}${entry.op === 'update' && diff?.length ? `: ${summary(diff)}` : ''} (by ${by} ${from})`;
   };
 
   // One try at publishing an outbox entry. defs: { featureDefs, invalidIds }.
@@ -161,16 +167,24 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
       return { outcome: 'not_published', key: entry.key, message: 'Not published yet: LifeCycle can\'t tell your GitHub user. Your edit is kept on this machine.' };
     }
     let diff = entry.diff || null;
+    let feature = null;
     try {
       const current = await readCurrent(entry.file);
-      if (entry.op === 'create') {
-        if (current) throw new SourceError('conflict', `${entry.feature_id} was created by someone else in the meantime.`, 422);
+      if (entry.op === 'create' || entry.op === 'create-project') {
+        if (current) throw new SourceError('conflict', `${subject(entry)} was created by someone else in the meantime.`, 422);
       } else {
         if (!current) throw new SourceError('conflict', `${entry.feature_id} was deleted from the shared repo after you opened it.`, 404);
         if (textHash(current.text) !== entry.base_hash) throw await staleError(entry.file, `changed ${entry.feature_id}`);
       }
       if (entry.op === 'delete') {
         await deleteFile(entry.file, { sha: current.sha, message: commitMessage(entry, null, by) });
+      } else if (entry.op === 'create-project') {
+        const built = buildProjectFile(entry.draft, []);
+        if (built.errors.length) {
+          save({ ...entry, by, state: 'failed', message: built.errors.map((e) => `${e.field}: ${e.message}`).join(' '), last_try_at: now() });
+          return { outcome: 'invalid', key: entry.key, errors: built.errors, message: 'Not published: the project is not valid. It is kept on this machine.' };
+        }
+        await writeFile(entry.file, built.text, { create: true, message: commitMessage(entry, null, by) });
       } else {
         // The edit is applied to the file as it is in the repo now (the same text the editor opened).
         const baseFeature = current ? validateDefinition(entry.file, current.text).feature : null;
@@ -183,18 +197,19 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
           return { outcome: 'invalid', key: entry.key, errors: built.errors, message: 'Not published: the edit is no longer valid against the current definitions. It is kept on this machine.' };
         }
         diff = built.diff;
+        feature = built.feature;
         await writeFile(entry.file, built.text, { sha: current?.sha, create: entry.op === 'create', message: commitMessage(entry, diff, by) });
       }
     } catch (err) {
       if (!(err instanceof SourceError)) throw err;
       if (err.kind === 'conflict') {
         save({ ...entry, by, state: 'conflict', message: err.message, last_try_at: now() });
-        logAlertEvent({ event: 'feature_edit_conflict', feature: entry.feature_id, source: 'feature-edit', id: entry.key, detail: err.message });
+        logAlertEvent({ event: 'feature_edit_conflict', feature: subject(entry), source: 'feature-edit', id: entry.key, detail: err.message });
         return { outcome: 'conflict', key: entry.key, message: `Not published: ${err.message} Nothing was overwritten and your edit is kept on this machine. Open the latest version, then apply your edit again.` };
       }
       const pending = err.kind === 'unreachable';
       save({ ...entry, by, state: pending ? 'pending' : 'failed', message: err.message, last_try_at: now() });
-      logAlertEvent({ event: 'feature_edit_failed', feature: entry.feature_id, source: 'feature-edit', id: entry.key, detail: err.message });
+      logAlertEvent({ event: 'feature_edit_failed', feature: subject(entry), source: 'feature-edit', id: entry.key, detail: err.message });
       return {
         outcome: pending ? 'queued' : 'not_published', key: entry.key,
         message: pending
@@ -203,8 +218,8 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
       };
     }
     drop(entry.key);
-    logAlertEvent({ event: 'feature_edit_published', feature: entry.feature_id, source: 'feature-edit', id: entry.key, detail: `${entry.op}${diff?.length ? ` (${summary(diff)})` : ''} by ${by}` });
-    return { outcome: 'published', key: entry.key, op: entry.op, id: entry.feature_id, by, diff,
+    logAlertEvent({ event: 'feature_edit_published', feature: subject(entry), source: 'feature-edit', id: entry.key, detail: `${entry.op}${diff?.length ? ` (${summary(diff)})` : ''} by ${by}` });
+    return { outcome: 'published', key: entry.key, op: entry.op, id: subject(entry), by, diff, feature,
       message: `Committed to ${where()} as ${by}. Teammates see it on their next Refresh View.` };
   }
 
@@ -213,6 +228,13 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
   // review: async (built) => review result (src/features/review.js), run before anything is saved.
   // via: 'chat' when the edit was confirmed in the LifeCycle chat (app or AI tools); shown in the commit.
   async function submit({ op, id, draft, base_hash, confirm_dependents = false, via = 'form' }, { defs, files, review }) {
+    if (op === 'create-project') {
+      const built = buildProjectFile(draft, defs.projectDefs || []);
+      if (built.errors.length) return { outcome: 'invalid', errors: built.errors, message: 'Can\'t publish: fix the fields marked below.' };
+      const entry = save({ key: `project-${built.project.id}-${crypto.randomBytes(3).toString('hex')}`, op, kind: 'project', feature_id: null, project_id: built.project.id,
+        file: built.path, draft, name: built.project.name, via, state: 'pending', message: null, created_at: new Date().toISOString(), last_try_at: null });
+      return { ...(await attempt(entry, defs)), project: built.project };
+    }
     const base = op === 'create' ? null : defs.featureDefs.find((f) => f.id === id);
     if (op !== 'create' && !base) return { outcome: 'not_found', message: `No valid feature "${id}" is defined, so it can't be ${op === 'delete' ? 'deleted' : 'edited'} here.` };
     if (op !== 'create' && files.has(base.file) && base_hash && textHash(files.get(base.file)) !== base_hash) {
@@ -251,9 +273,16 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
   }
 
   // Retries edits waiting for the shared repo (all: also failed ones).
+  // In order, so a feature published here counts for the ones after it (depends_on).
   async function flush(defs, { all = false } = {}) {
     const results = [];
-    for (const e of listFeatureOutbox()) if (e.state === 'pending' || (all && e.state === 'failed')) results.push(await attempt(e, defs));
+    const known = { ...defs, featureDefs: [...defs.featureDefs] };
+    for (const e of listFeatureOutbox()) {
+      if (!(e.state === 'pending' || (all && e.state === 'failed'))) continue;
+      const r = await attempt(e, known);
+      if (r.feature) known.featureDefs = [...known.featureDefs.filter((f) => f.id !== r.feature.id), r.feature];
+      results.push(r);
+    }
     return results;
   }
 

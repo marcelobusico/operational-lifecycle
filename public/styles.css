@@ -1697,3 +1697,26 @@ a, a:hover, a:focus, a:focus-visible, a:visited, .linkbtn, .linkbtn:hover, .link
 .imp-reason-lv { color: var(--muted-foreground); }
 .imp-dup { --s: var(--warning); padding: 6px 10px; border-radius: var(--radius); font-size: 13px; background: color-mix(in srgb, var(--s) var(--tint), transparent); border: 1px solid color-mix(in srgb, var(--s) 30%, transparent); }
 .imp-ro { margin-top: 16px; }
+
+/* Import review (#/import): the proposal as an editable tree, checked and approved item by item. */
+.imp-review .banner { margin: 10px 0; }
+.imp-bar { align-items: center; margin: 12px 0; }
+.imp-edit { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.imp-edit.imp-off { opacity: .7; }
+.imp-edit.imp-off > .imp-row .imp-nm { text-decoration: line-through; }
+.imp-edit select, .imp-edit input, .imp-edit textarea { font: inherit; }
+.imp-row select { height: 26px; }
+.imp-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 14px; margin-top: 10px; }
+.imp-fields > .ferrs { grid-column: 1 / -1; margin-top: -6px; }
+.imp-fields label:has(textarea), .imp-fields .imp-ev, .imp-fields label:has(select[multiple]) { grid-column: 1 / -1; }
+.imp-review fieldset.imp-dup { margin: 8px 0 0; display: grid; gap: 4px; }
+.imp-review fieldset.imp-dup legend { padding: 0; margin-bottom: 4px; }
+.imp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; }
+.imp-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--muted); font-size: 12.5px; }
+.imp-x { border: 0; background: none; cursor: pointer; color: var(--muted-foreground); font-size: 15px; line-height: 1; padding: 0 4px; }
+.imp-x:hover { color: var(--destructive); }
+.imp-evadd { display: flex; gap: 8px; }
+.imp-evadd input { flex: 1; }
+.imp-results ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.imp-results li.bad b { color: var(--destructive); }
+.imp-results h3 { margin: 0; font-size: 14px; }

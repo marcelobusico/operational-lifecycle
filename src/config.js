@@ -129,6 +129,8 @@ export const paths = {
   alertsLog: () => path.join(homeDir(), 'logs', 'alerts.log'),
   alertsSeen: () => path.join(homeDir(), 'alerts-seen.json'),
   outboxDir: () => path.join(homeDir(), 'outbox'),
+  // The import proposal being reviewed (src/import/review-store.js): kept until it is published or discarded.
+  importReview: () => path.join(homeDir(), 'import-review.json'),
   notices: () => path.join(homeDir(), 'notices.json'),
   // Update check and upgrade (src/update/): one log line per check or upgrade, and the upgrade's work folder.
   updateLog: () => path.join(homeDir(), 'logs', 'updates.log'),

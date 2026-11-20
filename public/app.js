@@ -528,7 +528,281 @@ function importOutHtml(job) {
   if (job.state === 'failed') {
     return `<div class="banner st-blocked section" role="alert"><span class="ico">!</span><div>${esc(job.message || 'The analysis stopped.')}</div></div>${importSourcesHtml(job.sources || [])}${note}`;
   }
-  return `${importSourcesHtml(job.proposal?.sources || job.sources || [])}${job.proposal ? importProposalHtml(job.proposal) : ''}${note}`;
+  // Once it is being reviewed, the review below the form shows the proposal (editable).
+  if (importReview?.review && importReview.review.analysis_id === job.id) return importSourcesHtml(job.proposal?.sources || job.sources || []);
+  const canReview = job.proposal?.items?.length;
+  return `${importSourcesHtml(job.proposal?.sources || job.sources || [])}${job.proposal ? importProposalHtml(job.proposal) : ''}
+    ${canReview ? `<div class="factions section"><button class="btn primary" type="button" data-start-review="${esc(job.id)}">Review and approve…</button><span class="small muted">Edit the proposal, check it, then publish it to LifeCycle-Data.</span></div>` : note}`;
+}
+
+// ---------- import review: edit the proposal, check it, approve it (src/import/review-store.js) ----------
+// The review is saved on this machine as it is edited, so leaving the screen or reloading keeps it.
+// Approve publishes what is ready through the same path as the New feature form.
+let importReview = null; // { review, fresh, ready, access, busy, loaded, saving, timer, error }
+const IMP_STATE = { ready: 'Ready', invalid: 'Needs a fix', blocked: 'Blocked', excluded: 'Not imported', skipped: 'Skipped', published: 'Published', queued: 'Waiting for the repo' };
+const IMP_STATE_CLS = { ready: 'st-done', invalid: 'st-blocked', blocked: 'st-blocked', excluded: 'st-unavailable', skipped: 'st-unavailable', published: 'st-done', queued: 'st-in_progress' };
+const IMP_FIELD = { name: 'Name', id: 'Id', owner: 'Owner', team: 'Team', description: 'Description', parent: 'Parent', target_date: 'Target date', depends_on: 'Depends on',
+  done_when: 'Done when', evidence: 'Evidence', duplicate_choice: 'Possible duplicate', steps: 'Steps', level: 'Level' };
+const IMP_EDIT = ['level', 'name', 'id', 'description', 'parent', 'owner', 'team', 'target_date', 'depends_on', 'done_when', 'evidence', 'included', 'duplicate_choice'];
+const IMP_PARENT = { project: [], feature: ['project'], step: ['feature'], task: ['step'] };
+
+async function loadImportReview() {
+  try {
+    const r = await fetch('/api/import/review', { cache: 'no-store' }).then((x) => x.json());
+    importReview = { ...(importReview || {}), ...r, loaded: true };
+  } catch (err) { importReview = { review: null, loaded: true, error: `LifeCycle couldn't load the review: ${err.message}` }; }
+  if (parseRoute().route === 'import') render();
+}
+
+// One item's state as shown: what Approve did with it, else what the last check found.
+function impState(it) {
+  if (it.published) return it.published.queued ? 'queued' : 'published';
+  return it.check?.state || null;
+}
+
+// "PR owner/repo#12", "issue owner/repo#3" or "ABC-123" typed or pasted → evidence, or null.
+function impParseEvidence(text) {
+  const t = String(text || '').trim();
+  const gh = t.match(/github\.com\/([\w.-]+\/[\w.-]+)\/(pull|issues)\/(\d+)/i);
+  if (gh) return { source: 'github', type: gh[2].toLowerCase() === 'pull' ? 'pr' : 'issue', repo: gh[1], number: Number(gh[3]) };
+  const jira = t.match(/(?:browse\/)?([A-Z][A-Z0-9]+-\d+)\b/);
+  if (jira) return { source: 'jira', type: 'ticket', key: jira[1] };
+  return null;
+}
+
+const impMsgs = (msgs) => (msgs.length ? `<div class="ferrs" role="alert">${msgs.join('')}</div>` : '');
+// Errors and AI findings for one field of an item.
+function impFieldMsgs(it, field) {
+  const c = it.check || {};
+  const r = it.published ? null : it.result;
+  const errs = [...(c.errors || []), ...(r?.errors || [])].filter((e) => e.field === field);
+  const ai = (c.findings || []).filter((x) => x.field === field);
+  return impMsgs([...errs.map((e) => `<p class="ferr">${esc(IMP_FIELD[field] || field)}: ${esc(e.message)}</p>`),
+    ...ai.map((x) => `<p class="${x.kind === 'contradiction' ? 'ferr' : 'fsug'}"><b>${x.kind === 'contradiction' ? 'Contradiction' : 'Suggestion'}:</b> ${esc(x.message)}${x.suggestion ? ` <span class="muted">${esc(x.suggestion)}</span>` : ''}</p>`)]);
+}
+const impBad = (it, field) => ((it.check?.errors || []).some((e) => e.field === field) || (it.check?.findings || []).some((x) => x.field === field && x.kind === 'contradiction') ? ' aria-invalid="true"' : '');
+
+// The parents an item may have at its level: proposed items, or defined features / projects.
+function impParentOptions(it, items) {
+  const want = IMP_PARENT[it.level] || [];
+  if (!want.length) return null;
+  const opts = [];
+  if (it.level === 'feature') opts.push(['', 'No project']);
+  for (const p of items) if (p.ref !== it.ref && want.includes(p.level)) opts.push([p.ref, `${IMP_LEVEL[p.level]}: ${p.name || '(no name)'}${p.included ? '' : ' (not imported)'}`]);
+  if (it.level === 'feature') for (const p of (snapshot?.projects || []).filter((x) => x.project.id)) opts.push([`existing:${p.project.id}`, `Existing project: ${p.project.name}`]);
+  if (it.level === 'step') for (const f of snapshot?.features || []) opts.push([`existing:${f.feature.id}`, `Existing feature: ${f.feature.name}`]);
+  if (it.parent && !opts.some(([v]) => v === it.parent)) opts.push([it.parent, `${it.parent} (not available)`]);
+  if (!it.parent && it.level !== 'feature') opts.unshift(['', 'Choose…']);
+  return opts;
+}
+
+function impItemEditor(it, items, kidsOf, ro) {
+  const st = impState(it);
+  const lock = ro || Boolean(it.published);
+  const dis = lock ? ' disabled' : '';
+  const inp = (field, label, value, extra = '') => `<label>${label}<input data-f="${field}" value="${esc(value || '')}"${impBad(it, field)}${dis}${extra}></label>${impFieldMsgs(it, field)}`;
+  const dup = it.possible_duplicate && it.possible_duplicate.kind === it.level ? it.possible_duplicate : null;
+  const parents = impParentOptions(it, items);
+  const feats = items.filter((x) => x.level === 'feature' && x.ref !== it.ref);
+  const depOpts = [...feats.map((x) => [`ref:${x.ref}`, `Proposed: ${x.name}`]), ...(snapshot?.features || []).map((f) => [f.feature.id, f.feature.name])];
+  const pub = it.published;
+  const kids = kidsOf(it.ref);
+  const result = it.result && !pub && it.result.outcome !== 'published' ? `<p class="ferr" role="alert">${esc(it.result.message)}</p>` : '';
+  return `<li class="imp-item imp-edit lv-${esc(it.level)}${it.included ? '' : ' imp-off'}" data-ref="${esc(it.ref)}">
+    <div class="imp-row">
+      <label class="radio"><input type="checkbox" data-f="included"${it.included ? ' checked' : ''}${dis}> Include</label>
+      <select data-f="level" aria-label="Level"${dis}>${['project', 'feature', 'step', 'task'].map((l) => `<option value="${l}"${l === it.level ? ' selected' : ''}>${IMP_LEVEL[l]}</option>`).join('')}</select>
+      <b class="imp-nm">${esc(it.name || '(no name)')}</b>
+      ${st ? `<span class="badge ${IMP_STATE_CLS[st] || ''}">${esc(IMP_STATE[st] || st)}</span>` : ''}
+      ${pub ? `<a href="${pub.kind === 'project' ? projHref(pub.id) : href(pub.id)}">${pub.op === 'update' ? 'Open the updated feature' : `Open ${esc(pub.kind)}`}</a>` : ''}
+    </div>
+    ${it.check?.reason && !pub ? `<p class="small muted">${esc(it.check.reason)}</p>` : ''}
+    ${result}
+    ${impFieldMsgs(it, 'level')}
+    ${dup ? `<fieldset class="imp-dup"><legend><b>Possible duplicate</b> of the existing ${esc(dup.kind)} <a href="${dup.kind === 'project' ? projHref(dup.id) : href(dup.id)}">${esc(dup.name)}</a>. What should happen?</legend>
+      ${[['skip', 'Skip it'], ['create', 'Create anyway'], ['merge', dup.kind === 'feature' ? 'Add its steps and evidence to the existing feature' : 'Put its features in the existing project']].map(([v, l]) => `<label class="radio"><input type="radio" name="dup-${esc(it.ref)}" data-f="duplicate_choice" value="${v}"${it.duplicate_choice === v ? ' checked' : ''}${dis}> ${l}</label>`).join('')}
+      ${impFieldMsgs(it, 'duplicate_choice')}</fieldset>` : ''}
+    ${it.included && !pub ? `<div class="imp-fields">
+      ${inp('name', 'Name', it.name)}
+      ${parents ? `<label>${it.level === 'feature' ? 'Project' : `Belongs to (${IMP_PARENT[it.level].join(', ')})`}<select data-f="parent"${impBad(it, 'parent')}${dis}>${parents.map(([v, l]) => `<option value="${esc(v)}"${(it.parent || '') === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>${impFieldMsgs(it, 'parent')}` : ''}
+      ${it.level === 'project' || it.level === 'feature' ? inp('id', 'Id <span class="muted small">file name in LifeCycle-Data</span>', it.id, ' class="mono"') : ''}
+      ${it.level !== 'task' ? inp('owner', 'Owner', it.owner) : ''}
+      ${it.level === 'step' ? inp('team', 'Team <span class="muted small">optional</span>', it.team) : ''}
+      ${it.level === 'step' ? `<label>Done when<textarea data-f="done_when" rows="2"${impBad(it, 'done_when')}${dis}>${esc(it.done_when)}</textarea></label>${impFieldMsgs(it, 'done_when')}` : ''}
+      ${it.level === 'project' || it.level === 'feature' ? `<label>Description<textarea data-f="description" rows="2"${impBad(it, 'description')}${dis}>${esc(it.description)}</textarea></label>${impFieldMsgs(it, 'description')}` : ''}
+      ${it.level === 'feature' ? `${inp('target_date', 'Target date', it.target_date, ' type="date"')}
+        <label>Depends on <span class="muted small">Ctrl/⌘-click to choose several</span><select multiple size="${Math.min(5, Math.max(2, depOpts.length))}" data-f="depends_on"${impBad(it, 'depends_on')}${dis}>${depOpts.map(([v, l]) => `<option value="${esc(v)}"${it.depends_on.includes(v) ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>${impFieldMsgs(it, 'depends_on')}` : ''}
+      ${it.level === 'step' || it.level === 'task' ? `<div class="imp-ev"><span class="small muted">Evidence (PRs, issues, Jira tickets)</span>
+        <div class="imp-chips">${it.evidence.map((e, i) => `<span class="imp-chip">${esc(impEvidence(e))}${lock ? '' : `<button type="button" class="imp-x" data-ev-del="${i}" aria-label="Remove ${esc(impEvidence(e))}">×</button>`}</span>`).join('') || '<span class="muted small">None.</span>'}</div>
+        ${lock ? '' : '<div class="imp-evadd"><input data-ev-new placeholder="Paste a GitHub PR or issue link, or a Jira key" aria-label="Add evidence"><button type="button" class="btn" data-ev-add>Add</button></div>'}
+        ${impFieldMsgs(it, 'evidence')}</div>` : ''}
+      ${impFieldMsgs(it, 'steps')}
+    </div>` : ''}
+    ${it.check?.review_note && !pub ? `<p class="small muted">${esc(it.check.review_note)}</p>` : ''}
+    <p class="small imp-reason-lv"><b>Why a ${esc(it.original_level || it.level)}:</b> ${esc(it.level_reason || 'the AI gave no reason')}</p>
+    ${it.source_links.length ? `<p class="small muted">From ${it.source_links.map((u) => `<a href="${escUrl(u)}" target="_blank" rel="noopener">${esc(impShortUrl(u))}</a>`).join(' · ')}</p>` : ''}
+    ${kids.length ? `<ul class="imp-tree">${kids.map((k) => impItemEditor(k, items, kidsOf, ro)).join('')}</ul>` : ''}</li>`;
+}
+
+function impResultsHtml(a) {
+  if (!a?.results?.length) return '';
+  const WORD = { published: 'Published', queued: 'Will publish when the repo is reachable', conflict: 'Not published (conflict)', invalid: 'Not published', not_published: 'Not published' };
+  const what = (x) => (x.kind === 'project' ? `Project ${x.name}` : x.op === 'update' ? `Added to ${x.name}` : `Feature ${x.name}`);
+  const queued = a.results.filter((x) => x.outcome === 'queued').length;
+  return `<div class="card section imp-results" role="status" aria-live="polite"><h3>Last approval</h3>
+    ${queued ? `<p class="small">The shared repo couldn't be reached: ${queued} ${queued === 1 ? 'item is' : 'items are'} kept on this machine and will be published on the next Refresh View once it is reachable.</p>` : ''}
+    <ul>${a.results.map((x) => `<li class="${x.outcome === 'published' ? 'ok' : x.outcome === 'queued' ? '' : 'bad'}"><b>${esc(what(x))}</b>: ${esc(WORD[x.outcome] || x.outcome)}${x.link ? ` · <a href="${esc(x.link)}">open</a>` : ''}${x.outcome !== 'published' ? `<br><span class="small muted">${esc(x.message || '')}</span>` : ''}</li>`).join('')}</ul></div>`;
+}
+
+function importReviewHtml() {
+  const s = importReview;
+  const r = s?.review;
+  if (!r) return '';
+  const items = r.items;
+  const refs = new Set(items.map((i) => i.ref));
+  const kidsOf = (ref) => items.filter((i) => i.parent === ref);
+  const roots = items.filter((i) => !i.parent || !refs.has(i.parent));
+  const ro = s.access && !s.access.can_edit;
+  const left = items.filter((i) => i.included && !i.published).length;
+  const ready = s.fresh ? s.ready : 0;
+  const plan = (r.plan || []).filter((p) => p.ready);
+  const aiNote = (r.plan || []).find((p) => p.review_ran === false)?.review_note;
+  const approveLabel = s.busy === 'approve' ? 'Approving…' : s.fresh ? `Approve ${ready} ready` : 'Check and approve';
+  return `<section class="section card imp-review" id="imp-review"><h2>Review and approve</h2>
+    <p class="muted small">Edit anything below; changes are saved on this machine as you type. <b>Check</b> validates every included item and runs the AI product review, like the New feature form. <b>Approve</b> publishes the items that are ready, one commit per feature under your GitHub user; the others stay here to fix.</p>
+    ${ro ? `<div class="banner st-unavailable" role="status"><span class="ico">!</span><div><b>You can't approve this import.</b> ${esc(s.access.reason || '')}</div></div>` : ''}
+    ${aiNote ? `<p class="small fsug" role="note">${esc(aiNote)}</p>` : ''}
+    ${s.error ? `<p class="ferr" role="alert">${esc(s.error)}</p>` : ''}
+    <div class="factions imp-bar">
+      <button class="btn" type="button" data-rv="check"${s.busy || !left ? ' disabled' : ''}>${s.busy === 'check' ? 'Checking…' : 'Check'}</button>
+      <button class="btn primary" type="button" data-rv="approve"${ro || s.busy || !left || (s.fresh && !ready) ? ' disabled' : ''}${ro ? ` title="${esc(s.access.reason || '')}"` : ''}>${approveLabel}</button>
+      <button class="btn" type="button" data-rv="discard"${s.busy ? ' disabled' : ''}>Discard the review</button>
+      <span class="small muted" aria-live="polite">${s.saving ? 'Saving…' : s.fresh ? `Checked ${r.checked_at ? new Date(r.checked_at).toLocaleTimeString() : ''}` : left ? 'Changed since the last check' : 'Everything in this review is published.'}</span>
+    </div>
+    ${s.fresh && plan.length ? `<p class="small">Approve will ${plan.map((p) => (p.kind === 'project' ? `create the project <b>${esc(p.name)}</b>` : p.op === 'update' ? `add ${esc((p.added_steps || []).join(', ') || 'steps')} to <b>${esc(p.name)}</b>` : `create the feature <b>${esc(p.name)}</b>`)).join('; ')}.</p>` : ''}
+    ${impResultsHtml(r.last_approval)}
+    <form class="cform" id="imp-review-form" onsubmit="return false"><ul class="imp-tree imp-root">${roots.map((i) => impItemEditor(i, items, kidsOf, ro)).join('')}</ul></form>
+  </section>`;
+}
+
+function rerenderReview() {
+  const box = document.querySelector('#imp-review-box');
+  if (box) box.innerHTML = importReviewHtml();
+}
+
+// Saves the edits (debounced); a structural change re-draws the tree.
+function saveReview(redraw) {
+  const s = importReview;
+  s.fresh = false;
+  clearTimeout(s.timer);
+  if (redraw) rerenderReview();
+  s.timer = setTimeout(() => flushReview(), 500);
+}
+async function flushReview() {
+  const s = importReview;
+  clearTimeout(s.timer); s.timer = null;
+  const r = s.review;
+  if (!r) return;
+  s.saving = true;
+  s.chain = (s.chain || Promise.resolve()).then(async () => {
+    try {
+      const out = await post('/api/import/review', { revision: r.revision, edits: r.items.map((it) => Object.fromEntries([['ref', it.ref], ...IMP_EDIT.map((k) => [k, it[k]])])) }, 'PUT');
+      r.revision = out.review.revision;
+      s.fresh = out.fresh; s.ready = out.ready; s.error = null;
+    } catch (err) { s.error = `Your last edits couldn't be saved (${err.message}). Reload to see what is saved.`; }
+    s.saving = false;
+    const bar = document.querySelector('#imp-review .imp-bar span');
+    if (bar) bar.textContent = s.error ? '' : 'Changed since the last check';
+    if (s.error) rerenderReview();
+  });
+  return s.chain;
+}
+
+async function reviewAction(kind) {
+  const s = importReview;
+  if (kind === 'discard' && !confirm('Discard this review and all its edits? Nothing already published is undone.')) return;
+  if (s.timer) await flushReview();
+  else if (s.chain) await s.chain;
+  s.busy = kind; s.error = null;
+  rerenderReview();
+  try {
+    const res = await fetch(`/api/import/review/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const out = await res.json().catch(() => ({}));
+    s.busy = null;
+    if (kind === 'discard') { importReview = { review: null, loaded: true, access: s.access }; render(); return; }
+    if (out.review) Object.assign(s, { review: out.review, fresh: out.fresh, ready: out.ready });
+    if (!res.ok) s.error = out.message || out.error || `HTTP ${res.status}`;
+    if (kind === 'approve' && res.ok) {
+      const n = (o) => (out.results || []).filter((x) => x.outcome === o).length;
+      toast(`${n('published')} published${n('queued') ? `, ${n('queued')} waiting for the repo` : ''}${out.results.length - n('published') - n('queued') ? `, ${out.results.length - n('published') - n('queued')} not published` : ''}.`, out.results.length > n('published') + n('queued'));
+      // The Roadmap shows the new features.
+      if (n('published')) load();
+    }
+  } catch (err) { s.busy = null; s.error = err.message; }
+  rerenderReview();
+}
+
+async function startReview(analysisId, replace = false) {
+  try {
+    const res = await fetch('/api/import/review', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ analysis_id: analysisId, replace }) });
+    const out = await res.json().catch(() => ({}));
+    if (res.status === 409 && out.outcome === 'has_review') {
+      if (confirm(`${out.message}\n\nReplace it?`)) return startReview(analysisId, true);
+      return;
+    }
+    if (!res.ok) { toast(out.message || out.error || `HTTP ${res.status}`, true); return; }
+    importReview = { ...(importReview || {}), review: out.review, fresh: out.fresh, ready: out.ready, loaded: true };
+    render();
+    reviewAction('check');
+  } catch (err) { toast(err.message, true); }
+}
+
+function wireReview(root) {
+  const box = root.querySelector('#imp-review-box');
+  if (!box || box.dataset.wired) return;
+  box.dataset.wired = '1';
+  const itemOf = (el) => {
+    const li = el.closest('[data-ref]');
+    return li && importReview?.review?.items.find((x) => x.ref === li.dataset.ref);
+  };
+  const addEvidence = (el) => {
+    const it = itemOf(el);
+    const input = el.closest('.imp-ev')?.querySelector('[data-ev-new]');
+    if (!it || !input) return;
+    const e = impParseEvidence(input.value);
+    if (!e) { toast('Paste a GitHub PR or issue link (github.com/owner/repo/pull/12) or a Jira key (ABC-123).', true); return; }
+    it.evidence = [...it.evidence.filter((x) => impEvidence(x) !== impEvidence(e)), e];
+    saveReview(true);
+  };
+  box.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    if (b.dataset.rv) return reviewAction(b.dataset.rv);
+    if (b.dataset.evDel !== undefined) { const it = itemOf(b); if (it) { it.evidence = it.evidence.filter((_, i) => i !== Number(b.dataset.evDel)); saveReview(true); } }
+    if (b.hasAttribute('data-ev-add')) addEvidence(b);
+  });
+  box.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target.matches('[data-ev-new]')) { ev.preventDefault(); addEvidence(ev.target); } });
+  const onEdit = (ev, structural) => {
+    const el = ev.target;
+    const f = el.dataset?.f;
+    const it = f && itemOf(el);
+    if (!it) return;
+    if (f === 'included') it.included = el.checked;
+    else if (f === 'depends_on') it.depends_on = [...el.selectedOptions].map((o) => o.value);
+    else if (f === 'parent') it.parent = el.value || null;
+    else if (f === 'level') {
+      it.level = el.value;
+      // A new level needs a parent of the right level: keep it only if it still fits.
+      const p = it.parent && importReview.review.items.find((x) => x.ref === it.parent);
+      const want = IMP_PARENT[it.level];
+      if (it.parent && (p ? !want.includes(p.level) : !(it.parent.startsWith('existing:') && ((it.level === 'step' && (snapshot?.features || []).some((x) => `existing:${x.feature.id}` === it.parent)) || (it.level === 'feature' && (snapshot?.projects || []).some((x) => `existing:${x.project.id}` === it.parent)))))) it.parent = null;
+      if (it.level === 'project') it.parent = null;
+    } else it[f] = el.value;
+    if (f === 'name') { const nm = el.closest('[data-ref]')?.querySelector('.imp-nm'); if (nm) nm.textContent = el.value || '(no name)'; }
+    saveReview(structural);
+  };
+  box.addEventListener('input', (ev) => { if (ev.target.matches('input:not([type=checkbox]):not([type=radio]):not([data-ev-new]), textarea')) onEdit(ev, false); });
+  box.addEventListener('change', (ev) => { if (ev.target.matches('select, input[type=checkbox], input[type=radio], input[type=date]')) onEdit(ev, true); });
 }
 
 function renderImport() {
@@ -537,7 +811,7 @@ function renderImport() {
   const running = v.job?.state === 'running';
   const aiOff = v.ai && !v.ai.available;
   return `<p class="kicker">Roadmap</p><h1>Import from links</h1>
-    <p class="lede">Paste links to Jira epics or stories, and to GitHub repositories, PRs, issues or files. LifeCycle reads them (never source code) and the AI proposes projects, features, steps and tasks. This only proposes: nothing is added to LifeCycle, Jira or GitHub.</p>
+    <p class="lede">Paste links to Jira epics or stories, and to GitHub repositories, PRs, issues or files. LifeCycle reads them (never source code) and the AI proposes projects, features, steps and tasks. You then review and edit the proposal; nothing is added to LifeCycle-Data until you approve it, and nothing is ever written to Jira or GitHub.</p>
     ${aiOff ? `<div class="banner st-unavailable section" role="status"><span class="ico">!</span><div><b>Analysis needs an AI provider.</b> ${esc(v.ai.message || '')}</div></div>` : ''}
     <form id="importform" class="cform section" novalidate><div class="card fbox">
       <label>Links <span class="muted small">one per line, or separated by spaces or commas; Confluence pages aren't read yet</span><textarea name="links" rows="5" class="mono" spellcheck="false" placeholder="https://your-site.atlassian.net/browse/ABC-123&#10;https://github.com/owner/repo">${esc(v.text)}</textarea></label>
@@ -545,6 +819,7 @@ function renderImport() {
       ${v.error ? `<p class="ferr" role="alert">${esc(v.error)}</p>` : ''}
       <div class="factions"><button class="btn primary" type="submit"${running || v.busy || aiOff ? ' disabled' : ''}>${running || v.busy ? 'Analyzing…' : 'Analyze'}</button><a class="btn" href="#/roadmap">Back to the roadmap</a></div>
     </div></form>
+    <div id="imp-review-box">${importReviewHtml()}</div>
     <div id="imp-out">${importOutHtml(v.job)}</div>`;
 }
 
@@ -583,6 +858,7 @@ function followImport(id) {
 }
 
 function leaveImport() {
+  if (importReview?.timer) flushReview();
   if (!importView) return;
   clearInterval(importView.poll); clearTimeout(importView.typing);
   importView.poll = null;
@@ -593,6 +869,12 @@ function wireImport(root) {
   const form = root.querySelector('#importform');
   if (!form || !v) return;
   const ta = form.querySelector('[name="links"]');
+  if (!importReview?.loaded) loadImportReview();
+  wireReview(root);
+  root.querySelector('#imp-out')?.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-start-review]');
+    if (b) startReview(b.dataset.startReview);
+  });
   if (!v.ai) {
     fetch('/api/import/ai', { cache: 'no-store' }).then((r) => r.json()).then((ai) => {
       if (importView !== v) return;

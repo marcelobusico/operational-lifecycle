@@ -5,9 +5,10 @@ and GitHub and proposes what LifeCycle should track: projects, features inside t
 features, and tasks linked to steps. This document is the contract between the screen that produces
 a proposal and the work that edits and publishes it.
 
-**Nothing is written.** The analysis reads Jira through Claude Code with read-only tools (the
+**The analysis writes nothing.** It reads Jira through Claude Code with read-only tools (the
 Atlassian connector's write tools are refused), reads GitHub with GET requests only, and keeps the
-proposal in memory on this machine. Nothing is added to LifeCycle-Data, Jira or GitHub.
+proposal in memory on this machine. Only **Approve** in the review (below) writes, and only to
+LifeCycle-Data; nothing is ever written to Jira or GitHub repositories other than LifeCycle-Data.
 
 ## Links it reads
 
@@ -93,7 +94,7 @@ one ("Search inside checkout history" next to "Checkout") is not. Duplicates are
 and projects LifeCycle last read from the shared repo; if it hasn't read them yet, the proposal says
 so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full read.
 
-## API (local only)
+## API: analysis (local only)
 
 - `POST /api/import/links {text}` → `{links, ai}`: what each link is, before anything is read.
 - `GET /api/import/ai` → `{available, provider, message}`.
@@ -102,6 +103,55 @@ so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full r
 - `GET /api/import/analyze/<id>` → `{state: running|done|failed, phase: reading|analyzing|done|failed, sources, proposal, message}`.
   Analyses are kept in memory (the last five) while LifeCycle runs. 404 `{reason: replaced|unknown, message}`:
   `replaced` when newer analyses took its place, `unknown` otherwise (e.g. LifeCycle restarted).
+
+## Review and approve (`lifecycle.import-review/v1`)
+
+**Review and approve…** under a finished proposal turns it into an editable review, saved in
+`~/.lifecycle/import-review.json` (one per machine) as it is edited, so leaving the screen, a reload or
+a LifeCycle restart keeps the edits. Starting a review of another analysis while one has unpublished
+edits asks first (409 `has_review`).
+
+Each item is the proposal item plus what the person can change: `level`, `parent`, `name`, `id`
+(projects and features: the file name), `description`, `owner`, `team` (steps), `target_date` and
+`depends_on` (features), `done_when` (steps), `evidence` (steps and tasks), `included` (excluded items
+stay in the review, unpublished) and `duplicate_choice` (`skip`, `create` or `merge`; an item marked
+`possible_duplicate` is blocked until the person chooses). `source_links`, `level_reason`,
+`original_level` and `possible_duplicate` are read-only.
+
+- `parent`: another item's `ref`, or `existing:<id>`: a defined project (for a feature) or a defined
+  feature (for a step, which adds the step to that feature). A feature's project is its parent.
+- `depends_on`: defined feature ids, or `ref:<ref>` for another proposed feature.
+- Changing the level re-parents the item: a feature turned into a step of another feature becomes one
+  of its steps (one file, not two). Children of an excluded or skipped item are not imported either.
+- A task is a PR, issue or ticket linked to a step (docs/terminology.md): its evidence goes on its step.
+- `merge` on a feature adds its steps and their evidence to the existing feature (one edit of that
+  file, no new file); on a project, its features go into the existing project.
+
+**Check** compiles the review into the drafts the New feature form sends (`src/import/approve.js`) and
+runs the same validation and AI product review (`src/features/review.js`) on each, against the defined
+features and projects plus the proposed ones. Each item gets `check: {state, errors, findings, reason,
+review_note, review_ran}`; `state` is `ready`, `invalid` (an error, shown on its field), `blocked` (an
+AI contradiction), `excluded` or `skipped`. Ambiguities are shown as suggestions and don't block. A
+step or task is ready when the feature it lands in is. Without a reachable AI provider the review is
+reported as not run and valid items are ready. `plan` lists the files Approve would write.
+
+**Approve** (write access to LifeCycle-Data only; otherwise 403 `read_only` with the reason) refreshes
+the definitions, checks again, then publishes the ready items through the feature publisher
+(`src/features/publish.js`): new projects first, then new features in dependency order, then additions
+to existing features; one commit per file under the person's GitHub identity ("from LifeCycle import"),
+with the conflict check. When the shared repo can't be reached they wait in the local outbox (projects
+too) and publish on a later refresh, in order. Each item gets `published: {kind, op, id, queued, at}`
+or, when it failed, `result: {outcome, message, errors}` and stays in the review to fix and approve
+again. `last_approval.results` lists each file with its outcome and a link to its page.
+
+## API: review (local only)
+
+- `GET /api/import/review` → `{review, fresh, ready, busy, access}`; `fresh` is false after an edit
+  since the last check; `ready` counts the files Approve would write.
+- `POST /api/import/review {analysis_id, replace?}` → starts a review of a finished analysis.
+- `PUT /api/import/review {revision, edits: [{ref, ...fields}]}` → saves edits (409 when another window
+  saved a newer revision).
+- `POST /api/import/review/check`, `POST /api/import/review/approve` (→ `results`), `POST /api/import/review/discard`.
 
 ## Adding a source type
 
