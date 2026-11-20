@@ -125,6 +125,7 @@ function parseRoute() {
   if ((m = h.match(/^#\/feature\/(.+)$/))) return { route: 'feature', id: decodeURIComponent(m[1]) };
   if ((m = h.match(/^#\/project\/([^/]+)(?:\/(map))?$/))) return { route: 'project', id: decodeURIComponent(m[1]), tab: m[2] || 'features' };
   if (h === '#/projects/new') return { route: 'project-new' };
+  if (h === '#/import') return { route: 'import' };
   if ((m = h.match(/^#\/project\/([^/]+)\/edit$/))) return { route: 'project-new', editId: decodeURIComponent(m[1]) };
   if (h === '#/roadmap') return { route: 'roadmap' };
   if (h === '#/map' || h.startsWith('#/map?')) return { route: 'map' };
@@ -164,7 +165,7 @@ document.addEventListener('click', (e) => {
 
 function renderChrome(r) {
   rememberProject(r);
-  const navRoute = r.route === 'project' || r.route === 'feature' || (r.route === 'project-new' && r.editId) ? 'roadmap' : r.route === 'feature-edit' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route === 'app-edit' ? 'apps' : r.route;
+  const navRoute = r.route === 'project' || r.route === 'feature' || (r.route === 'project-new' && r.editId) ? 'roadmap' : r.route === 'feature-edit' || r.route === 'import' ? 'roadmap' : r.route === 'change' ? 'alerts' : r.route === 'team' || r.route === 'team-edit' ? 'teams' : r.route === 'app-edit' ? 'apps' : r.route;
   if (r.route === 'alerts') alertsAcknowledged = true;
   const unseenCount = alertView ? alertView.alerts.filter((a) => !isSeen(a)).length : 0;
   const nb = $('#alert-count');
@@ -208,6 +209,8 @@ function renderChrome(r) {
     crumbs = `<a href="#/roadmap">Roadmap</a>${sep}${crumbProject(r.editId)}${sep}<span class="cur">Edit</span>`;
   } else if (r.route === 'app-edit') {
     crumbs = `<a href="#/apps">Apps</a>${sep}<span class="cur">${r.id ? `${esc(appById(r.id)?.name || r.id)} · Edit` : 'New app'}</span>`;
+  } else if (r.route === 'import') {
+    crumbs = `<a href="#/roadmap">Roadmap</a>${sep}<span class="cur">Import from links</span>`;
   } else if (r.route === 'project') {
     crumbs = `<a href="#/roadmap">Roadmap</a>${sep}<span class="cur">${esc(projectById(r.id)?.project.name || r.id)}</span>`;
   } else {
@@ -334,6 +337,7 @@ function render() {
     team: () => renderTeam(r.id),
     'team-edit': () => renderTeamEdit(r.mode, r.id),
     'project-new': () => renderProjectNew(r.editId || null),
+    import: () => renderImport(),
     change: () => renderChangeForm(r.mode, r.id || null),
     'feature-edit': () => renderFeatureEdit(r.mode, r.id, r.project),
     home: () => renderHome(),
@@ -351,6 +355,8 @@ function render() {
   if (r.route !== 'app-edit') appForm = null;
   if (r.route === 'project-new') wireProjectNew(main);
   if (r.route !== 'project-new') projectForm = null;
+  if (r.route === 'import') wireImport(main);
+  else leaveImport();
   if (r.route !== 'team-edit') teamForm = null;
   if (r.route !== 'team' || teamDelete?.id !== r.id) teamDelete = null;
   wireTeams(main);
@@ -448,6 +454,192 @@ function featureList(fs, { showProject = false } = {}) {
 }
 
 // ---------- new project: commits projects/<id>.yaml under the person's GitHub user ----------
+
+// Import from links (docs/import-format.md): paste Jira and GitHub links, see what each one is, Analyze,
+// follow the reading, then read the proposal. Read-only: nothing is added to LifeCycle, Jira or GitHub.
+// The state stays while LifeCycle is open, so going to a feature and back keeps the result.
+let importView = null; // { text, links, ai, job, error, busy, poll, typing }
+const importButton = () => '<a class="btn" href="#/import">Import from links</a>';
+const IMP_KIND = { jira: 'Jira', github_repo: 'GitHub repo', github_pr: 'GitHub PR', github_issue: 'GitHub issue', github_file: 'GitHub file', confluence: 'Confluence', unrecognized: 'Not recognized' };
+const IMP_STATUS = { pending: 'waiting', reading: 'reading…', read: 'read', failed: 'failed', unrecognized: 'not recognized', unsupported: 'not read yet' };
+const IMP_LEVEL = { project: 'Project', feature: 'Feature', step: 'Step', task: 'Task' };
+const impShortUrl = (u) => String(u).replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+const impEvidence = (e) => (e.source === 'jira' ? `Jira ${e.key}` : `${e.type === 'pr' ? 'PR' : 'issue'} ${e.repo}#${e.number}`);
+
+const importLinksHtml = (links) => (links.length ? `<ul class="imp-links" aria-label="Recognized links">${links.map((l) => `<li${l.status === 'ok' ? '' : ' class="imp-bad"'}>
+  <span class="imp-kind">${esc(IMP_KIND[l.kind] || l.kind)}</span><span class="imp-lbl">${esc(l.status === 'ok' ? l.label : l.input)}</span>${l.reason ? `<span class="imp-why">${esc(l.reason)}</span>` : ''}</li>`).join('')}</ul>` : '');
+
+function importProgressHtml(job) {
+  const src = job.sources || [];
+  const step = (cls, icon, text) => `<li class="${cls}">${icon}<span>${text}</span></li>`;
+  const spin = '<span class="spin" aria-hidden="true"></span>', pend = '<span class="pend" aria-hidden="true"></span>';
+  return `<section class="section card imp-prog" aria-live="polite"><h2>${job.phase === 'analyzing' ? 'Analyzing…' : 'Reading the links…'}</h2><ol class="upd-steps">
+    ${src.map((s) => (s.status === 'reading' ? step('now', spin, `${esc(s.label)} <span class="sr">(reading)</span>`)
+    : s.status === 'pending' ? step('', pend, esc(s.label))
+      : s.status === 'read' ? step('done', '<span aria-hidden="true">✓</span>', `${esc(s.label)}<span class="sr"> (read)</span>`)
+        : step('imp-fail', '<span aria-hidden="true">✕</span>', `${esc(s.label)}: ${esc(IMP_STATUS[s.status] || s.status)}`))).join('')}
+    ${step(job.phase === 'analyzing' ? 'now' : '', job.phase === 'analyzing' ? spin : pend, 'The AI proposes projects, features, steps and tasks')}
+  </ol><p class="muted small">You can keep this open; reading Jira and analyzing can take a few minutes.</p></section>`;
+}
+
+function importSourcesHtml(sources) {
+  const read = sources.filter((s) => s.status === 'read');
+  const notRead = sources.filter((s) => s.status !== 'read');
+  const left = sources.filter((s) => (s.left_out || []).length);
+  const link = (s) => (s.url ? `<a href="${escUrl(s.url)}" target="_blank" rel="noopener">${esc(s.label)}</a>` : esc(s.label));
+  return `<section class="section card imp-sources"><h2>Sources</h2>
+    <h3>Read (${read.length})</h3>${read.length ? `<ul>${read.map((s) => `<li>${link(s)}</li>`).join('')}</ul>` : '<p class="muted small">None.</p>'}
+    ${notRead.length ? `<h3>Not read (${notRead.length})</h3><ul class="imp-failed">${notRead.map((s) => `<li>${link(s)}: <span class="imp-reason">${esc(s.reason || IMP_STATUS[s.status] || s.status)}</span></li>`).join('')}</ul>` : ''}
+    ${left.length ? `<h3>Left out</h3><ul>${left.flatMap((s) => s.left_out.map((t) => `<li><span class="muted">${esc(s.label)}:</span> ${esc(t)}</li>`)).join('')}</ul>` : ''}
+  </section>`;
+}
+
+function importItemHtml(it, kidsOf) {
+  const dup = it.possible_duplicate;
+  const kids = kidsOf(it.ref);
+  return `<li class="imp-item lv-${esc(it.level)}"><div class="imp-row"><span class="imp-lv">${esc(IMP_LEVEL[it.level] || it.level)}</span><b>${esc(it.name)}</b>${it.owner ? `<span class="muted small">Owner: ${esc(it.owner)}</span>` : ''}</div>
+    ${dup ? `<p class="imp-dup" role="note"><b>Possible duplicate</b> of the existing ${esc(dup.kind)} <a href="${dup.kind === 'project' ? projHref(dup.id) : href(dup.id)}">${esc(dup.name)}</a>.</p>` : ''}
+    ${it.description ? `<p class="imp-desc">${esc(it.description)}</p>` : ''}
+    ${it.done_when ? `<p class="small"><b>Done when:</b> ${esc(it.done_when)}</p>` : ''}
+    ${it.evidence.length ? `<p class="small"><b>Evidence:</b> ${it.evidence.map((e) => esc(impEvidence(e))).join(', ')}</p>` : ''}
+    <p class="small imp-reason-lv"><b>Why a ${esc(it.level)}:</b> ${esc(it.level_reason || 'the AI gave no reason')}</p>
+    ${it.source_links.length ? `<p class="small muted">From ${it.source_links.map((u) => `<a href="${escUrl(u)}" target="_blank" rel="noopener">${esc(impShortUrl(u))}</a>`).join(' · ')}</p>` : ''}
+    ${kids.length ? `<ul class="imp-tree">${kids.map((k) => importItemHtml(k, kidsOf)).join('')}</ul>` : ''}</li>`;
+}
+
+function importProposalHtml(p) {
+  const items = p.items || [];
+  const refs = new Set(items.map((i) => i.ref));
+  const kidsOf = (ref) => items.filter((i) => i.parent === ref);
+  const roots = items.filter((i) => !i.parent || !refs.has(i.parent));
+  const n = (l) => items.filter((i) => i.level === l).length;
+  const counts = ['project', 'feature', 'step', 'task'].filter(n).map((l) => `${n(l)} ${n(l) === 1 ? l : `${l}s`}`).join(', ');
+  return `<section class="section card imp-proposal"><h2>Proposal</h2>
+    <p class="muted small">${items.length ? `${esc(counts)}, proposed by ${esc(p.provider?.name || 'the AI')}${p.provider?.model ? ` (${esc(p.provider.model)})` : ''}. Each level was decided with LifeCycle's terminology rule; the reason is under each item.` : 'The AI proposed nothing from these sources.'}</p>
+    ${p.duplicates_note ? `<p class="small imp-dup" role="note">${esc(p.duplicates_note)}</p>` : ''}
+    ${roots.length ? `<ul class="imp-tree imp-root">${roots.map((i) => importItemHtml(i, kidsOf)).join('')}</ul>` : ''}
+  </section>`;
+}
+
+function importOutHtml(job) {
+  if (!job) return '';
+  const note = '<p class="muted small imp-ro" role="note">Nothing has been added to LifeCycle, Jira or GitHub.</p>';
+  if (job.state === 'running') return importProgressHtml(job);
+  if (job.state === 'failed') {
+    return `<div class="banner st-blocked section" role="alert"><span class="ico">!</span><div>${esc(job.message || 'The analysis stopped.')}</div></div>${importSourcesHtml(job.sources || [])}${note}`;
+  }
+  return `${importSourcesHtml(job.proposal?.sources || job.sources || [])}${job.proposal ? importProposalHtml(job.proposal) : ''}${note}`;
+}
+
+function renderImport() {
+  importView ||= { text: '', links: [], ai: null, job: null, error: null, busy: false, poll: null, typing: null };
+  const v = importView;
+  const running = v.job?.state === 'running';
+  const aiOff = v.ai && !v.ai.available;
+  return `<p class="kicker">Roadmap</p><h1>Import from links</h1>
+    <p class="lede">Paste links to Jira epics or stories, and to GitHub repositories, PRs, issues or files. LifeCycle reads them (never source code) and the AI proposes projects, features, steps and tasks. This only proposes: nothing is added to LifeCycle, Jira or GitHub.</p>
+    ${aiOff ? `<div class="banner st-unavailable section" role="status"><span class="ico">!</span><div><b>Analysis needs an AI provider.</b> ${esc(v.ai.message || '')}</div></div>` : ''}
+    <form id="importform" class="cform section" novalidate><div class="card fbox">
+      <label>Links <span class="muted small">one per line, or separated by spaces or commas; Confluence pages aren't read yet</span><textarea name="links" rows="5" class="mono" spellcheck="false" placeholder="https://your-site.atlassian.net/browse/ABC-123&#10;https://github.com/owner/repo">${esc(v.text)}</textarea></label>
+      <div id="imp-links">${importLinksHtml(v.links)}</div>
+      ${v.error ? `<p class="ferr" role="alert">${esc(v.error)}</p>` : ''}
+      <div class="factions"><button class="btn primary" type="submit"${running || v.busy || aiOff ? ' disabled' : ''}>${running || v.busy ? 'Analyzing…' : 'Analyze'}</button><a class="btn" href="#/roadmap">Back to the roadmap</a></div>
+    </div></form>
+    <div id="imp-out">${importOutHtml(v.job)}</div>`;
+}
+
+// Polls the analysis every 1.5 s (like the update dialog) until it ends.
+function followImport(id) {
+  const v = importView;
+  clearInterval(v.poll);
+  const tick = async () => {
+    let res, j;
+    try { res = await fetch(`/api/import/analyze/${encodeURIComponent(id)}`, { cache: 'no-store' }); j = await res.json(); } catch { return; }
+    if (importView !== v || !v.poll) return;
+    if (res.status === 404) {
+      clearInterval(v.poll); v.poll = null; v.job = null;
+      v.error = j?.message || 'This analysis is no longer available. Press Analyze again.';
+      if (parseRoute().route === 'import') render();
+      return;
+    }
+    // Any other error answer is not a result: keep following, and give up only after several in a row.
+    if (!res.ok || !j?.state) {
+      v.misses = (v.misses || 0) + 1;
+      if (v.misses >= 5) {
+        clearInterval(v.poll); v.poll = null;
+        v.error = `LifeCycle couldn't say how the analysis is going (${j?.error || `HTTP ${res.status}`}). Press Analyze to follow it again (a running analysis is picked up, not started twice).`;
+        if (parseRoute().route === 'import') render();
+      }
+      return;
+    }
+    v.misses = 0;
+    v.job = j;
+    if (j.state !== 'running') { clearInterval(v.poll); v.poll = null; if (parseRoute().route === 'import') render(); return; }
+    const out = document.querySelector('#imp-out');
+    if (out) out.innerHTML = importOutHtml(j);
+  };
+  v.poll = setInterval(tick, 1500);
+  tick();
+}
+
+function leaveImport() {
+  if (!importView) return;
+  clearInterval(importView.poll); clearTimeout(importView.typing);
+  importView.poll = null;
+}
+
+function wireImport(root) {
+  const v = importView;
+  const form = root.querySelector('#importform');
+  if (!form || !v) return;
+  const ta = form.querySelector('[name="links"]');
+  if (!v.ai) {
+    fetch('/api/import/ai', { cache: 'no-store' }).then((r) => r.json()).then((ai) => {
+      if (importView !== v) return;
+      v.ai = ai;
+      if (!ai.available && parseRoute().route === 'import') render();
+    }).catch(() => {});
+  }
+  // Each link's type shows as it is pasted, before anything is read.
+  ta.addEventListener('input', () => {
+    v.text = ta.value;
+    clearTimeout(v.typing);
+    v.typing = setTimeout(async () => {
+      const text = v.text;
+      try {
+        const r = await post('/api/import/links', { text });
+        if (importView !== v || v.text !== text) return;
+        v.links = r.links || [];
+        const box = document.querySelector('#imp-links');
+        if (box) box.innerHTML = importLinksHtml(v.links);
+      } catch { /* shown again on the next keystroke */ }
+    }, 300);
+  });
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    v.text = ta.value; v.busy = true; v.error = null;
+    render();
+    let r;
+    try {
+      const res = await fetch('/api/import/analyze', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: v.text }) });
+      r = await res.json();
+    } catch (err) { r = { outcome: 'error', message: `LifeCycle couldn't start the analysis: ${err.message}` }; }
+    v.busy = false;
+    if (r.outcome === 'started' || r.outcome === 'running') {
+      if (r.outcome === 'running') toast(r.message);
+      v.job = { id: r.id, state: 'running', phase: 'reading', sources: [] };
+      if (parseRoute().route === 'import') render();
+      followImport(r.id);
+      return;
+    }
+    if (r.outcome === 'no_ai') v.ai = { available: false, message: r.message };
+    if (Array.isArray(r.links)) v.links = r.links;
+    // no_ai: the banner says how to set one up.
+    v.error = r.outcome === 'no_ai' ? null : r.message || r.error || "The analysis didn't start.";
+    if (parseRoute().route === 'import') render();
+  });
+  if (v.job?.state === 'running' && !v.poll) followImport(v.job.id);
+}
 
 let projectForm = null; // { editId, draft: { name, id, owner, description }, base, idTouched, errors, result, busy }
 
@@ -2498,7 +2690,7 @@ function renderRoadmap() {
   ];
   const filters = activeFilters('roadmap', items, { projects: [], teams: [], features: [], only: 'all' });
   const blockedN = shown.filter((f) => f.state === 'blocked').length, riskN = shown.filter(isRisk).length;
-  const head = fhead('Roadmap', 'Roadmap', stat(shown.length, shown.length === 1 ? 'feature' : 'features') + stat(blockedN, 'blocked', 'blocked') + stat(riskN, 'at risk', 'risk') + newFeatureButton());
+  const head = fhead('Roadmap', 'Roadmap', stat(shown.length, shown.length === 1 ? 'feature' : 'features') + stat(blockedN, 'blocked', 'blocked') + stat(riskN, 'at risk', 'risk') + importButton() + newFeatureButton());
   if (!fs.length) return `${head}<div class="card empty section"><strong>Nothing to place on the roadmap yet</strong>Features appear here once they're defined.</div>`;
   if (!shown.length) {
     return `${head}${controls}${filters}${filteredEmpty('roadmap', `Nothing among the ${featuresLabel(fs)} is in ${items.map((i) => i.label.toLowerCase()).join(' and ')}. Remove a filter above, or clear them all.`)}`;

@@ -214,7 +214,7 @@ alerts. With nothing new: `outcome: "no_changes"` and "No changes since your las
 | `provider`          | Needs                                                                      |
 |---------------------|----------------------------------------------------------------------------|
 | `claude` (default)  | an Anthropic API key: `ANTHROPIC_API_KEY`, or `npm run setup` (saved in `credentials.json`). Model `claude-opus-5-5` unless `ai.model` is set. Requests opt into Anthropic's server-side refusal fallback. |
-| `openai-compatible` | `ai.apiUrl` (e.g. `http://localhost:11434/v1`), `ai.model`, optional key (`LIFECYCLE_AI_API_KEY` / `OPENAI_API_KEY` / setup) |
+| `openai-compatible` | `ai.apiUrl` (e.g. `http://localhost:11434/v1`), `ai.model`, optional key (`LIFECYCLE_AI_API_KEY` / `OPENAI_API_KEY` / setup); optional `ai.maxOutputTokens` for Import from links (sent as `max_tokens`; unset = the model's own limit) |
 | `command`           | `ai.command`, a local CLI that reads the prompt on stdin and prints JSON, e.g. `["claude", "-p"]` |
 | `none`              | nothing: LifeCycle's rules read the question and write the lead            |
 

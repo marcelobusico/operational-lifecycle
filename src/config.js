@@ -81,6 +81,9 @@ export const DEFAULTS = {
   },
   // The alert list (lifecycle.alerts/v1) from the alerts work: a local file path or an http(s) URL.
   alerts: { source: null },
+  // Import from links (src/import, docs/import-format.md): how much one analysis reads per source.
+  // Anything beyond a cap is skipped and the result says what was left out.
+  import: { maxStoriesPerEpic: 25, maxPrsPerRepo: 20, maxIssuesPerRepo: 20, maxDocsPerRepo: 10, maxCharsPerSource: 20000 },
   // Delay warnings: a feature is warned when days left < open steps x daysPerStep.
   delay: { daysPerStep: 3 },
   // Ask & digest. provider: claude (default) | openai-compatible | command | none. The provider's
@@ -91,6 +94,7 @@ export const DEFAULTS = {
     apiUrl: null,      // null = the provider's default; openai-compatible needs it (e.g. http://localhost:11434/v1)
     command: null,     // provider "command": a local CLI that reads the prompt on stdin, e.g. ["claude", "-p"]
     timeoutMs: 30000,
+    maxOutputTokens: null, // openai-compatible, Import from links only: max_tokens to send (null = the model's own limit)
   },
   // Who you are, for "features I own" in the digest: the owner names you answer to in definitions
   // (a GitHub handle like "@example-dev" and/or a team like "Catalog team").
@@ -168,6 +172,7 @@ export function loadConfig() {
       jira: { ...DEFAULTS.sources.jira, ...(saved.sources?.jira || {}) },
     },
     alerts: { ...DEFAULTS.alerts, ...(saved.alerts || {}) },
+    import: { ...DEFAULTS.import, ...(saved.import || {}) },
     delay: { ...DEFAULTS.delay, ...(saved.delay || {}) },
     ai: { ...DEFAULTS.ai, ...(saved.ai || {}) },
     me: { ...DEFAULTS.me, ...(saved.me || {}) },

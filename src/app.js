@@ -281,6 +281,10 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
     return lastDefs;
   }
 
+  // The definitions as last read, without starting or waiting for a read (null: nothing read yet). For
+  // checks that can say "not checked" instead of waiting for every source to be read.
+  const definitionsLast = () => lastDefs;
+
   // The latest refresh's snapshot (or a new refresh if there is none yet).
   const latest = async () => lastSnap || refresh();
 
@@ -296,5 +300,8 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
     return r;
   }
 
-  return { refresh, latest, config, publisher, featurePublisher, teamPublisher, submitTeamEdit, definitionsNow };
+  // Read-only GitHub access for Import from links (src/import): every call is a GET, whatever is asked.
+  const githubRead = (route, opts = {}) => client.request(route, { accept: opts.accept, what: opts.what, method: 'GET' });
+
+  return { refresh, latest, config, publisher, featurePublisher, teamPublisher, submitTeamEdit, definitionsNow, definitionsLast, githubRead, jiraRun };
 }

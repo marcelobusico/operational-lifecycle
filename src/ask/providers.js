@@ -75,6 +75,78 @@ export const REVIEW_SCHEMA = {
   additionalProperties: false,
 };
 
+// Import from links (src/import/analyze.js): the proposed projects, features, steps and tasks.
+export const IMPORT_SCHEMA = {
+  type: 'object',
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          ref: { type: 'string' },
+          level: { type: 'string', enum: ['project', 'feature', 'step', 'task'] },
+          name: { type: 'string' },
+          description: { type: 'string' },
+          parent: { type: 'string' },
+          owner: { type: 'string' },
+          done_when: { type: 'string' },
+          evidence: { type: 'array', items: { type: 'string' } },
+          sources: { type: 'array', items: { type: 'string' } },
+          level_reason: { type: 'string' },
+        },
+        required: ['ref', 'level', 'name', 'description', 'parent', 'owner', 'done_when', 'evidence', 'sources', 'level_reason'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['items'],
+  additionalProperties: false,
+};
+// An analysis reads many sources and writes a long answer: more room and time than a chat answer.
+// maxTokens is for Claude; an openai-compatible provider gets a limit only when ai.maxOutputTokens is
+// set, since models differ (gpt-4o allows 16384, reasoning models refuse max_tokens altogether).
+const ANALYZE = { maxTokens: 20000, minTimeoutMs: 180000 };
+
+// The analysis answer hit the provider's length limit, so its JSON is cut off: say so, with what to do.
+export class AnswerTooLongError extends Error {
+  constructor() {
+    super('the answer was cut off at the AI provider\'s length limit: these sources hold more than one proposal can. Paste fewer links (e.g. one epic or repository at a time) and Analyze again');
+    this.tooLong = true;
+  }
+}
+
+// Whether a JSON answer stops before its end: braces and brackets still open outside strings, or no
+// closing brace at all. A complete answer with a mistake inside (an unescaped quote, a missing comma)
+// is not cut off and keeps its parse error.
+export function looksCutOff(text) {
+  const s = String(text || '').replace(/\s*(```\s*)?$/, '');
+  const start = s.indexOf('{');
+  if (start < 0) return false;
+  if (!/[}\]]$/.test(s)) return true;
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < s.length; i += 1) {
+    const c = s[i];
+    if (inString) {
+      if (c === '\\') i += 1;
+      else if (c === '"') inString = false;
+    } else if (c === '"') inString = true;
+    else if (c === '{' || c === '[') depth += 1;
+    else if (c === '}' || c === ']') depth -= 1;
+  }
+  return !inString && depth > 0;
+}
+
+// The analysis answer of a provider that doesn't say why it stopped (command, Claude Code), or as a
+// second check: JSON that ends early was cut off at the length limit.
+function parseAnalysis(text) {
+  try { return parseJson(text); } catch (err) {
+    if (looksCutOff(text)) throw new AnswerTooLongError();
+    throw err;
+  }
+}
+
 function interpretPrompt({ question, features }) {
   return `Defined features (id: name):\n${features.map((f) => `${f.id}: ${f.name}`).join('\n')}\n\nQuestion: ${question}`;
 }
@@ -109,22 +181,23 @@ function claudeProvider(config) {
     client ||= new Anthropic({ apiKey: key, baseURL: config.ai.apiUrl || undefined, timeout: config.ai.timeoutMs, maxRetries: 1 });
     return client;
   };
-  async function call(system, user, schema) {
+  async function call(system, user, schema, { maxTokens = 4000, timeoutMs = null, analysis = false } = {}) {
     const res = await getClient().beta.messages.create({
       model,
-      max_tokens: 4000,
+      max_tokens: maxTokens,
       // If a safety classifier declines, Anthropic re-runs the request on its recommended fallback.
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       output_config: { effort: 'low', format: { type: 'json_schema', schema } },
       system,
       messages: [{ role: 'user', content: user }],
-    });
+    }, timeoutMs ? { timeout: timeoutMs } : undefined);
     if (res.stop_reason === 'refusal') throw new Error('Claude declined to answer');
+    if (analysis && res.stop_reason === 'max_tokens') throw new AnswerTooLongError();
     const text = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-    return parseJson(text);
+    return analysis ? parseAnalysis(text) : parseJson(text);
   }
-  const guarded = (system, user, schema) => call(system, user, schema).catch((err) => {
+  const guarded = (system, user, schema, opts) => call(system, user, schema, opts).catch((err) => {
     if (err?.status === 401) throw new Error(KEY_REJECTED('Anthropic'));
     throw err;
   });
@@ -134,6 +207,7 @@ function claudeProvider(config) {
     interpret: (input) => guarded(INTERPRET_SYSTEM, interpretPrompt(input), INTERPRET_SCHEMA),
     lead: (input) => guarded(LEAD_SYSTEM, leadPrompt(input), LEAD_SCHEMA),
     review: ({ system, prompt }) => guarded(system, prompt, REVIEW_SCHEMA),
+    analyze: ({ system, prompt }) => guarded(system, prompt, IMPORT_SCHEMA, { maxTokens: ANALYZE.maxTokens, timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs), analysis: true }),
   };
 }
 
@@ -141,19 +215,21 @@ function openAiCompatibleProvider(config, { fetchImpl = fetch } = {}) {
   const model = config.ai.model;
   const key = aiKey('openai-compatible');
   registerSecret(key);
-  async function call(system, user) {
+  async function call(system, user, { timeoutMs = config.ai.timeoutMs, maxTokens = null, analysis = false } = {}) {
     if (!config.ai.apiUrl) throw new Error('ai.apiUrl is not set for the openai-compatible provider');
     if (!model) throw new Error('ai.model is not set for the openai-compatible provider');
     const res = await fetchImpl(`${config.ai.apiUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: JSON.stringify({ model, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
-      signal: AbortSignal.timeout(config.ai.timeoutMs),
+      body: JSON.stringify({ model, response_format: { type: 'json_object' }, ...(maxTokens ? { max_tokens: maxTokens } : {}), messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 401) throw new Error(KEY_REJECTED('The AI provider'));
     if (!res.ok) throw new Error(`the provider answered HTTP ${res.status}`);
     const body = await res.json();
-    return parseJson(body.choices?.[0]?.message?.content);
+    if (analysis && body.choices?.[0]?.finish_reason === 'length') throw new AnswerTooLongError();
+    const text = body.choices?.[0]?.message?.content;
+    return analysis ? parseAnalysis(text) : parseJson(text);
   }
   return {
     name: 'openai-compatible',
@@ -161,23 +237,24 @@ function openAiCompatibleProvider(config, { fetchImpl = fetch } = {}) {
     interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
     lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
     review: ({ system, prompt }) => call(system, prompt),
+    analyze: ({ system, prompt }) => call(system, prompt, { timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs), maxTokens: config.ai.maxOutputTokens || null, analysis: true }),
   };
 }
 
 function commandProvider(config) {
   const cmd = Array.isArray(config.ai.command) ? config.ai.command : null;
-  function call(system, user) {
+  function call(system, user, { timeoutMs = config.ai.timeoutMs, analysis = false } = {}) {
     if (!cmd?.length) return Promise.reject(new Error('ai.command is not set (e.g. ["claude", "-p"])'));
     return new Promise((resolve, reject) => {
       const child = spawn(cmd[0], cmd.slice(1), { stdio: ['pipe', 'pipe', 'pipe'] });
       let out = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error('the command timed out')); }, config.ai.timeoutMs);
+      const timer = setTimeout(() => { child.kill(); reject(new Error('the command timed out')); }, timeoutMs);
       child.stdout.on('data', (d) => { out += d; });
       child.on('error', (err) => { clearTimeout(timer); reject(new Error(`could not run ${cmd[0]}: ${err.message}`)); });
       child.on('close', (code) => {
         clearTimeout(timer);
         if (code !== 0) return reject(new Error(`${cmd[0]} exited with code ${code}`));
-        try { resolve(parseJson(out)); } catch (err) { reject(err); }
+        try { resolve(analysis ? parseAnalysis(out) : parseJson(out)); } catch (err) { reject(err); }
       });
       child.stdin.end(`${system}\n\n${user}\n`);
     });
@@ -188,6 +265,7 @@ function commandProvider(config) {
     interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
     lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
     review: ({ system, prompt }) => call(system, prompt),
+    analyze: ({ system, prompt }) => call(system, prompt, { timeoutMs: Math.max(config.ai.timeoutMs || 0, ANALYZE.minTimeoutMs), analysis: true }),
   };
 }
 
@@ -196,13 +274,15 @@ function commandProvider(config) {
 function claudeCodeProvider(config, { run = runClaude } = {}) {
   const cfg = { command: Array.isArray(config.ai.command) && config.ai.command.length ? config.ai.command : ['claude', '-p'],
     timeoutMs: Math.max(config.ai.timeoutMs || 0, 120000) };
-  const call = async (system, user) => parseJson(await run(cfg, `${system}\n\n${user}`, { what: 'the AI answer', noTools: true, model: config.ai.model || null }));
+  const ask = (system, user, c) => run(c, `${system}\n\n${user}`, { what: 'the AI answer', noTools: true, model: config.ai.model || null });
+  const call = async (system, user) => parseJson(await ask(system, user, cfg));
   return {
     name: 'claude-code',
     model: config.ai.model || 'Claude Code default',
     interpret: (input) => call(INTERPRET_SYSTEM, interpretPrompt(input)),
     lead: (input) => call(LEAD_SYSTEM, leadPrompt(input)),
     review: ({ system, prompt }) => call(system, prompt),
+    analyze: async ({ system, prompt }) => parseAnalysis(await ask(system, prompt, { ...cfg, timeoutMs: Math.max(cfg.timeoutMs, ANALYZE.minTimeoutMs) })),
   };
 }
 

@@ -15,6 +15,7 @@ export function startFakeGithub({ token = 'test-token-not-a-real-credential' } =
     deployments: new Map(), // "owner/repo:environment" -> [{ id, sha, ref, payload, at, by, status }] oldest first
     ancestors: new Map(),   // sha -> Set(shas it includes)
     tags: new Map(),        // "owner/repo" -> [{ name, sha }] newest first (release tags)
+    branches: new Map(),    // "owner/repo" -> Set(ref names): when set, a contents read at any other ref (not a commit) is 404
     requests: [],
     login: 'tester',     // GET /user
     writable: new Set(), // repos the token can commit to (PUT contents)
@@ -144,8 +145,29 @@ export function startFakeGithub({ token = 'test-token-not-a-real-credential' } =
       state.commits.push({ repo, path: file, message: body.message, branch: body.branch, by: state.login, at: new Date().toISOString(), op: current === undefined ? 'create' : 'update', before: current, after: text });
       return json(res, current === undefined ? 201 : 200, { content: { path: file, sha: sha(text) }, commit: { sha: state.head(repo), message: body.message } });
     }
+    // Import from links: a repository's README, its docs/ folder, and its PR and issue lists (newest
+    // number first, standing in for "most recently updated"; the issue list includes PRs, as GitHub's does).
+    if (rest === '/readme' && req.method === 'GET') {
+      const text = state.files.get(repo)?.get('README.md');
+      if (text === undefined) return json(res, 404, { message: 'Not Found' });
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      return res.end(text);
+    }
+    if (rest === '/contents/docs' && req.method === 'GET') {
+      const list = [...(state.files.get(repo) || new Map()).keys()].filter((p) => /^docs\/[^/]+$/.test(p));
+      if (!list.length) return json(res, 404, { message: 'Not Found' });
+      return json(res, 200, list.map((p) => ({ name: p.slice('docs/'.length), path: p, type: 'file' })));
+    }
+    if ((rest === '/pulls' || rest === '/issues') && req.method === 'GET') {
+      const mine = (m, kind) => [...m.entries()].filter(([k]) => k.startsWith(`${repo}#`)).map(([k, v]) => ({ number: Number(k.split('#')[1]), user: { login: 'dev' }, state: 'open', ...v, ...(kind === 'pr' && rest === '/issues' ? { pull_request: {} } : {}) }));
+      const list = (rest === '/pulls' ? mine(state.prs, 'pr') : [...mine(state.issues, 'issue'), ...mine(state.prs, 'pr')]).sort((a, b) => b.number - a.number);
+      const per = Number(url.searchParams.get('per_page')) || 30;
+      const from = ((Number(url.searchParams.get('page')) || 1) - 1) * per;
+      return json(res, 200, list.slice(from, from + per));
+    }
     if (rest.startsWith('/contents/')) {
       const ref = url.searchParams.get('ref');
+      if (ref && state.branches.has(repo) && !state.branches.get(repo).has(ref) && !state.snapshots.has(ref)) return json(res, 404, { message: 'No commit found for the ref' });
       const text = (state.snapshots.get(ref) || state.files.get(repo))?.get(decodeURIComponent(rest.slice('/contents/'.length)));
       if (text === undefined) return json(res, 404, { message: 'Not Found' });
       if (!String(req.headers.accept).includes('raw')) return json(res, 200, { sha: sha(text), encoding: 'base64', content: Buffer.from(text).toString('base64') });
