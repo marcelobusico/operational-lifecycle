@@ -115,6 +115,7 @@ test('a read-only person can press Refresh Data: sources are read live, nothing 
     w.gh.state.login = login;
     w.gh.state.readOnlyLogins.delete('cy');
     w.gh.state.prs.set(`${CATALOG}#7`, pr7);
+    w.gh.state.runs.delete(`${CATALOG}@aaa7`);
   }
 });
 

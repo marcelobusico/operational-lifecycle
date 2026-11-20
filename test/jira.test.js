@@ -281,8 +281,9 @@ test('Refresh View reuses the last live read; Refresh Data reads the sources aga
   assert.ok(snapFile, 'the live read above committed a team snapshot for BOOK-102');
   const snapText = w.gh.state.files.get(DATA).get(snapFile);
   w.gh.state.files.get(DATA).delete(snapFile);
+  const resultsText = fs.readFileSync(resultsFile, 'utf8');
   try {
-    const noTicket = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
+    const noTicket = JSON.parse(resultsText);
     const ticketKeys = Object.keys(noTicket).filter((k) => k.includes('BOOK-102'));
     assert.ok(ticketKeys.length, 'BOOK-102 was saved by the live read');
     for (const k of ticketKeys) delete noTicket[k];
@@ -293,6 +294,7 @@ test('Refresh View reuses the last live read; Refresh Data reads the sources aga
     assert.match(JSON.stringify(unread), /Not read on this machine yet\. Press Refresh Data to read it\./);
   } finally {
     w.gh.state.files.get(DATA).set(snapFile, snapText);
+    fs.writeFileSync(resultsFile, resultsText);
   }
 
   // Refresh Data: read again, and the new state shows.

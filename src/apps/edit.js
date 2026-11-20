@@ -106,7 +106,7 @@ export async function createAppDefinition({ draft, apps, io, whoAmI, where }) {
   if (!by) return { outcome: 'not_published', message: "Not created: LifeCycle can't tell your GitHub user right now. Try again in a moment." };
   try {
     if (await io.readCurrent(built.path)) {
-      return { outcome: 'conflict', errors: [{ field: 'id', message: `${built.path} already exists in the shared repo` }], message: `Not created: ${built.path} already exists. Refresh View to see it.` };
+      return { outcome: 'conflict', errors: [{ field: 'id', message: `${built.path} already exists in the shared repo` }], message: `Not created: ${built.path} already exists. Press Refresh View to see it.` };
     }
     await io.writeFile(built.path, built.text, { create: true, message: `Add app ${built.app.id} (by ${by} from LifeCycle)` });
   } catch (err) {
@@ -159,7 +159,7 @@ export async function deleteAppDefinition({ id, apps, features, io, whoAmI, wher
   if (!by) return { outcome: 'not_published', message: "Not deleted: LifeCycle can't tell your GitHub user right now. Try again in a moment." };
   try {
     const current = await io.readCurrent(a.file);
-    if (!current) return { outcome: 'conflict', message: `Not deleted: ${a.file} is already gone from the shared repo. Refresh View to see it.` };
+    if (!current) return { outcome: 'conflict', message: `Not deleted: ${a.file} is already gone from the shared repo. Press Refresh View to see the current list.` };
     await io.deleteFile(a.file, { sha: current.sha, message: `Delete app ${id} (by ${by} from LifeCycle)` });
   } catch (err) {
     return writeError(err, 'deleted');
