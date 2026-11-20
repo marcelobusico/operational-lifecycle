@@ -2937,7 +2937,7 @@ function readLine(t) {
 function srcLine(t, { compact = false } = {}) {
   if (!t) return '';
   const links = t.links.length
-    ? t.links.map((l) => `<a class="src-link" href="${escUrl(l.url)}" target="_blank" rel="noopener">${esc(compact ? 'source' : l.label)} ↗</a>`).join('')
+    ? t.links.map((l) => `<a class="src-link" href="${escUrl(l.url)}" target="_blank" rel="noopener">${esc(compact ? 'source' : l.label)}&nbsp;↗</a>`).join('')
     : `<span class="src-none">no source item: ${esc(t.no_source_item)}</span>`;
   return `<span class="srcline" data-source="${esc(t.key)}">${links}${readLine(t)}</span>`;
 }
