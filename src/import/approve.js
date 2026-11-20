@@ -265,8 +265,9 @@ export async function checkReview(review, defs, reviewFn) {
   const at = (ref) => { if (!checks.has(ref)) checks.set(ref, { errors: [], findings: [], notes: [] }); return checks.get(ref); };
   for (const [ref, list] of c.problems) at(ref).errors.push(...list);
 
-  for (const p of c.projects) {
-    const others = [...(defs.projectDefs || []), ...proposedProjects.filter((x) => x.id !== p.draft.id)];
+  for (const [i, p] of c.projects.entries()) {
+    // The other proposed projects by unit, not id: two proposals with the same id would hide each other.
+    const others = [...(defs.projectDefs || []), ...proposedProjects.filter((_, j) => j !== i)];
     const built = buildProjectFile(p.draft, others);
     p.built = built;
     p.errors = built.errors;

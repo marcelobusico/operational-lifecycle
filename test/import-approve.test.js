@@ -162,3 +162,54 @@ test('the evidence box takes GitHub links, owner/repo#n (PR, or issue with "issu
   assert.equal(parse('acme/api#0'), null);
   assert.equal(parse('hello world'), null);
 });
+
+test('two proposed projects with the same id are both an error on their id, not both ready', async () => {
+  const p = proposal();
+  p.items.push({ ref: 'p2', level: 'project', name: 'Wallet', parent: null, owner: 'bo', evidence: [], source_links: [], level_reason: '', possible_duplicate: null });
+  const r = createReview(p);
+  applyEdits(r, [{ ref: 'f3', duplicate_choice: 'skip' }]);
+  const c = await checkReview(r, defs(), async () => ({ ran: false, findings: [], blocking: false }));
+  assert.deepEqual(c.projects.map((x) => [x.ref, x.ready]), [['p1', false], ['p2', false]]);
+  for (const ref of ['p1', 'p2']) assert.match(r.items.find((x) => x.ref === ref).check.errors.map((e) => `${e.field}: ${e.message}`).join(), /^id: "wallet" is already a project/);
+  applyEdits(r, [{ ref: 'p2', id: 'wallet-2' }]);
+  const c2 = await checkReview(r, defs(), async () => ({ ran: false, findings: [], blocking: false }));
+  assert.deepEqual(c2.projects.map((x) => x.ready), [true, true], 'a different id fixes both');
+});
+
+// The review screen's functions, taken from public/app.js.
+const appJs = async () => (await import('node:fs')).readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+
+test('the review tree draws every item once, also items that edits made each other\'s parent', async () => {
+  const js = await appJs();
+  const impTree = new Function(`${js.slice(js.indexOf('function impTree'), js.indexOf('function importReviewHtml'))}; return impTree;`)();
+  const items = [
+    { ref: 'p1', parent: null }, { ref: 'f1', parent: 'p1' },
+    { ref: 'a', parent: 'b' }, { ref: 'b', parent: 'a' }, { ref: 'c', parent: 'b' },
+  ];
+  const { roots, kidsOf } = impTree(items);
+  const drawn = [];
+  const draw = (it) => { drawn.push(it.ref); kidsOf(it.ref).forEach(draw); };
+  roots.forEach(draw);
+  assert.deepEqual(roots.map((x) => x.ref), ['p1', 'a']);
+  assert.deepEqual(drawn.sort(), ['a', 'b', 'c', 'f1', 'p1']);
+});
+
+test('Discard keeps the review on screen, with the reason, when the server refuses it', async () => {
+  const js = await appJs();
+  const src = js.slice(js.indexOf('async function reviewAction'), js.indexOf('async function impOutboxAction'));
+  const run = async (status, out) => {
+    const calls = [];
+    const env = new Function('fetch', 'calls', `let importReview = { review: { items: [] }, access: null };
+      const confirm = () => true; const flushReview = async () => {}; const toast = () => {}; const load = () => {};
+      const render = () => calls.push('render'); const rerenderReview = () => calls.push('rerender'); const loadImportReview = () => calls.push('reload');
+      ${src}; return { reviewAction, state: () => importReview };`)(async () => ({ ok: status < 400, status, json: async () => out }), calls);
+    await env.reviewAction('discard');
+    return { state: env.state(), calls };
+  };
+  const refused = await run(409, { outcome: 'busy', message: 'A approve is running. Wait for it to finish, then edit again.' });
+  assert.ok(refused.state.review, 'the review is still shown');
+  assert.match(refused.state.error, /approve is running/);
+  const done = await run(200, { outcome: 'discarded' });
+  assert.equal(done.state.review, null);
+  assert.ok(done.calls.includes('reload'), 'reloads to show what an earlier import left in the outbox');
+});

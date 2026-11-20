@@ -7,7 +7,7 @@
 // outbox when the shared repo can't be reached. Items that fail stay in the review with their error.
 import fs from 'node:fs';
 import { paths, writeJson } from '../config.js';
-import { listFeatureOutbox } from '../features/publish.js';
+import { listFeatureOutbox, featureOutboxOutcome } from '../features/publish.js';
 import { createReview, applyEdits, checkReview, contentKey, publishOrder, errorTarget } from './approve.js';
 
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
@@ -16,25 +16,35 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8
 export function createReviewStore({ app, importer, review }) {
   let busy = null; // 'check' | 'approve' while one runs
 
-  // Items queued in the outbox follow what happened to their entry since: gone means published; a
-  // conflict or failure puts the item back in the review with the error (the entry is dropped: the
-  // review keeps the edit, so Approve can publish it again).
+  // Items queued in the outbox follow what happened to their entry since: published (as the publisher
+  // recorded it) marks them published; a conflict or failure, a discard (on the feature page), or an
+  // unknown end puts the item back in the review with the reason (a conflict's entry is dropped: the
+  // review keeps the edit, so Approve can publish it again; a Check shows one that is already in the
+  // shared repo as already defined). Not while a check or approve runs: it saves the copy it loaded.
   function sync(r) {
+    if (busy) return r;
     const queued = r?.items.filter((it) => it.published?.queued && it.published.key) || [];
     if (!queued.length) return r;
     const entries = new Map(listFeatureOutbox().map((e) => [e.key, e]));
     const drop = new Set();
+    const back = (it, outcome, message) => { it.published = null; it.result = { outcome, message, errors: [] }; };
     for (const it of queued) {
       const e = entries.get(it.published.key);
       if (e?.state === 'pending') continue;
-      if (!e) {
-        it.published = { ...it.published, queued: false };
-        it.result = { outcome: 'published', message: 'Published once the shared repo was reachable.' };
+      if (e) {
+        drop.add(e.key);
+        back(it, e.state, `Not published: ${e.message || 'the shared repo refused it.'} Fix it if needed, then Approve again.`);
         continue;
       }
-      drop.add(e.key);
-      it.published = null;
-      it.result = { outcome: e.state, message: `Not published: ${e.message || 'the shared repo refused it.'} Fix it if needed, then Approve again.`, errors: [] };
+      const done = featureOutboxOutcome(it.published.key);
+      if (done?.outcome === 'published') {
+        it.published = { ...it.published, queued: false };
+        it.result = { outcome: 'published', message: 'Published once the shared repo was reachable.' };
+      } else if (done?.outcome === 'discarded') {
+        back(it, 'not_published', 'Not published: the copy waiting on this machine was discarded. Approve again to publish it.');
+      } else {
+        back(it, 'not_published', 'LifeCycle can\'t tell whether this was published. Check again: if it is in the shared repo, it shows as already defined.');
+      }
     }
     if (queued.some((it) => !it.published?.queued)) {
       for (const key of drop) app.featurePublisher.discard(key);
@@ -50,10 +60,15 @@ export function createReviewStore({ app, importer, review }) {
   const pendingItems = (r) => r.items.filter((it) => !it.published && it.included);
 
   // What the screen gets: the review, whether its checks are still current, and what Approve would do.
+  // outbox: entries from an import that this review doesn't follow (from a review since discarded or
+  // replaced). A new project's entry has no page of its own, so the import screen lists them.
   function view(r) {
-    if (!r) return { review: null };
+    const followed = new Set((r?.items || []).map((it) => it.published?.queued && it.published.key).filter(Boolean));
+    const outbox = listFeatureOutbox().filter((e) => e.via === 'import' && !followed.has(e.key))
+      .map(({ key, op, kind, name, state, message, created_at }) => ({ key, op, kind: kind || 'feature', name, state, message, created_at }));
+    if (!r) return { review: null, outbox };
     const fresh = Boolean(r.checked_key) && r.checked_key === contentKey(r);
-    return { review: r, fresh, busy, ready: fresh ? (r.plan || []).filter((p) => p.ready).length : 0 };
+    return { review: r, fresh, busy, outbox, ready: fresh ? (r.plan || []).filter((p) => p.ready).length : 0 };
   }
 
   // A new review from a finished analysis. Replacing a review with unpublished edits needs replace: true.
@@ -64,8 +79,12 @@ export function createReviewStore({ app, importer, review }) {
     if (job.state !== 'done' || !job.proposal?.items?.length) return { outcome: 'invalid', message: 'This analysis has nothing to review yet.' };
     const current = load();
     if (current && current.analysis_id === analysisId) return { outcome: 'started', ...view(current) };
-    if (current && !replace && current.revision > 1 && pendingItems(current).length) {
-      return { outcome: 'has_review', message: `You have a review in progress (${pendingItems(current).length} items not published yet, last edited ${current.updated_at}). Starting a new one replaces it and its edits.`, ...view(current) };
+    // Worth keeping: edits, or an approval (failed items to fix), or items still waiting for the repo.
+    const worked = current && (current.revision > 1 || current.last_approval);
+    const waiting = current ? current.items.filter((it) => it.published?.queued).length : 0;
+    if (current && !replace && ((worked && pendingItems(current).length) || waiting)) {
+      const parts = [pendingItems(current).length && `${pendingItems(current).length} items not published yet`, waiting && `${waiting} waiting for the shared repo`].filter(Boolean).join(', ');
+      return { outcome: 'has_review', message: `You have a review in progress (${parts}, last changed ${current.updated_at}). Starting a new one replaces it and its edits.`, ...view(current) };
     }
     return { outcome: 'started', ...view(save(createReview(job.proposal, { analysisId }))) };
   }

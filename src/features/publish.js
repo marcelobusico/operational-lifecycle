@@ -31,6 +31,31 @@ const entryFile = (key) => path.join(dir(), `${key}.json`);
 const accessCache = () => path.join(paths.cacheDir(), 'data-repo-access.json');
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
+// What became of an entry once it left the outbox: { outcome: published | discarded, at } or null
+// (unknown: never recorded, or older than a month). Kept in outbox/features/done/, so whoever followed
+// an entry (an import review) can tell a published edit from one that was discarded.
+const doneDir = () => path.join(dir(), 'done');
+const DONE_DAYS = 30;
+export const featureOutboxOutcome = (key) => readJson(path.join(doneDir(), `${key}.json`));
+function recordOutcome(key, outcome) {
+  fs.mkdirSync(doneDir(), { recursive: true });
+  const old = Date.now() - DONE_DAYS * 86400000;
+  for (const n of fs.readdirSync(doneDir())) {
+    const f = path.join(doneDir(), n);
+    try { if (fs.statSync(f).mtimeMs < old) fs.rmSync(f, { force: true }); } catch { /* gone already */ }
+  }
+  writeJson(path.join(doneDir(), `${key}.json`), { key, outcome, at: new Date().toISOString() }, 0o600);
+}
+
+// Entry times are strictly increasing on this machine, so the outbox (sorted by created_at) is retried
+// in the order edits were made even when two are saved in the same millisecond (an import queues a
+// feature right before the one that depends on it).
+let lastStamp = 0;
+function stamp() {
+  lastStamp = Math.max(Date.now(), lastStamp + 1);
+  return new Date(lastStamp).toISOString();
+}
+
 export function listFeatureOutbox() {
   if (!fs.existsSync(dir())) return [];
   return fs.readdirSync(dir()).filter((n) => n.endsWith('.json')).map((n) => readJson(path.join(dir(), n))).filter(Boolean)
@@ -218,6 +243,7 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
       };
     }
     drop(entry.key);
+    recordOutcome(entry.key, 'published');
     logAlertEvent({ event: 'feature_edit_published', feature: subject(entry), source: 'feature-edit', id: entry.key, detail: `${entry.op}${diff?.length ? ` (${summary(diff)})` : ''} by ${by}` });
     return { outcome: 'published', key: entry.key, op: entry.op, id: subject(entry), by, diff, feature,
       message: `Committed to ${where()} as ${by}. Teammates see it on their next Refresh View.` };
@@ -232,7 +258,7 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
       const built = buildProjectFile(draft, defs.projectDefs || []);
       if (built.errors.length) return { outcome: 'invalid', errors: built.errors, message: 'Can\'t publish: fix the fields marked below.' };
       const entry = save({ key: `project-${built.project.id}-${crypto.randomBytes(3).toString('hex')}`, op, kind: 'project', feature_id: null, project_id: built.project.id,
-        file: built.path, draft, name: built.project.name, via, state: 'pending', message: null, created_at: new Date().toISOString(), last_try_at: null });
+        file: built.path, draft, name: built.project.name, via, state: 'pending', message: null, created_at: stamp(), last_try_at: null });
       return { ...(await attempt(entry, defs)), project: built.project };
     }
     const base = op === 'create' ? null : defs.featureDefs.find((f) => f.id === id);
@@ -241,7 +267,7 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
       // This LifeCycle has already loaded someone else's newer version: keep the edit, say who.
       const err = await staleError(base.file, `changed ${id}`);
       const entry = save({ key: `${id}-${crypto.randomBytes(3).toString('hex')}`, op, feature_id: id, file: base.file, draft: op === 'delete' ? null : draft,
-        base_hash, diff: null, name: base.name, via, state: 'conflict', message: err.message, created_at: new Date().toISOString(), last_try_at: new Date().toISOString() });
+        base_hash, diff: null, name: base.name, via, state: 'conflict', message: err.message, created_at: stamp(), last_try_at: new Date().toISOString() });
       logAlertEvent({ event: 'feature_edit_conflict', feature: id, source: 'feature-edit', id: entry.key, detail: err.message });
       return { outcome: 'conflict', key: entry.key, message: `Not published: ${err.message} Nothing was overwritten and your edit is kept on this machine. Open the latest version, then apply your edit again.` };
     }
@@ -266,7 +292,7 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
       draft: op === 'delete' ? null : draft,
       base_hash: op === 'create' ? null : base_hash || textHash(files.get(base.file)),
       diff: built?.diff || null, name: op === 'create' ? built.feature.name : base.name, via,
-      state: 'pending', message: null, created_at: new Date().toISOString(), last_try_at: null,
+      state: 'pending', message: null, created_at: stamp(), last_try_at: null,
     });
     const result = await attempt(entry, defs);
     return { ...result, review: reviewed };
@@ -288,8 +314,10 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
 
   function discard(key) {
     const e = readJson(entryFile(key));
-    if (e) logAlertEvent({ event: 'feature_edit_discarded', feature: e.feature_id, source: 'feature-edit', id: key });
+    if (!e) return;
+    logAlertEvent({ event: 'feature_edit_discarded', feature: subject(e), source: 'feature-edit', id: key });
     drop(key);
+    recordOutcome(key, 'discarded');
   }
 
   // The shared data's file operations, also used to publish team edits (src/teams/publish.js).

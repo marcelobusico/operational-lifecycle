@@ -658,14 +658,41 @@ function impResultsHtml(a) {
     <ul>${a.results.map((x) => `<li class="${x.outcome === 'published' ? 'ok' : x.outcome === 'queued' ? '' : 'bad'}"><b>${esc(what(x))}</b>: ${esc(WORD[x.outcome] || x.outcome)}${x.link ? ` · <a href="${esc(x.link)}">open</a>` : ''}${x.outcome !== 'published' ? `<br><span class="small muted">${esc(x.message || '')}</span>` : ''}</li>`).join('')}</ul></div>`;
 }
 
+// The review as a tree: { roots, kidsOf }. Edits can leave items that are each other's parent (a
+// cycle); those can't be reached from a root, so the first of each is drawn as a root, and every
+// item is drawn once, so none is hidden and the drawing never loops.
+function impTree(items) {
+  const refs = new Set(items.map((i) => i.ref));
+  const under = (ref) => items.filter((i) => i.parent === ref);
+  const roots = items.filter((i) => !i.parent || !refs.has(i.parent));
+  const reached = new Set();
+  const walk = (it) => { if (reached.has(it.ref)) return; reached.add(it.ref); under(it.ref).forEach(walk); };
+  roots.forEach(walk);
+  for (const it of items) if (!reached.has(it.ref)) { roots.push(it); walk(it); }
+  const drawn = new Set(roots.map((i) => i.ref));
+  const kidsOf = (ref) => under(ref).filter((i) => !drawn.has(i.ref)).map((i) => { drawn.add(i.ref); return i; });
+  return { roots, kidsOf };
+}
+
+// Outbox entries from an earlier import that no review follows any more (it was discarded or replaced):
+// a new project waiting or refused has no page of its own, so they are listed here to retry or discard.
+function impOutboxHtml(list) {
+  if (!list?.length) return '';
+  const label = { pending: 'Waiting for the shared repo', conflict: 'Not published: conflict', failed: 'Not published' };
+  return `<div class="card section outbox imp-outbox"><div class="h">Kept on this machine from an earlier import</div><ul>${list.map((e) => `<li class="ob-${esc(e.state)}">
+      <div><b>${esc(label[e.state] || e.state)}</b> · ${esc(e.kind === 'project' ? 'new project' : e.op === 'create' ? 'new feature' : 'feature edit')}: ${esc(e.name || e.key)}
+        ${e.message ? `<div class="muted small">${esc(e.message)}</div>` : ''}</div>
+      <div class="aact"><button type="button" class="btn small" data-ob-retry>Retry now</button>
+        <button type="button" class="btn small" data-ob-discard="${esc(e.key)}">Discard</button></div></li>`).join('')}</ul></div>`;
+}
+
 function importReviewHtml() {
   const s = importReview;
   const r = s?.review;
-  if (!r) return '';
+  const orphans = impOutboxHtml(s?.outbox);
+  if (!r) return orphans;
   const items = r.items;
-  const refs = new Set(items.map((i) => i.ref));
-  const kidsOf = (ref) => items.filter((i) => i.parent === ref);
-  const roots = items.filter((i) => !i.parent || !refs.has(i.parent));
+  const { roots, kidsOf } = impTree(items);
   const ro = s.access && !s.access.can_edit;
   const lock = ro || Boolean(s.busy); // nothing changes while a check or approve runs
   const left = items.filter((i) => i.included && !i.published).length;
@@ -687,7 +714,7 @@ function importReviewHtml() {
     ${s.fresh && plan.length ? `<p class="small">Approve will ${plan.map((p) => (p.kind === 'project' ? `create the project <b>${esc(p.name)}</b>` : p.op === 'update' ? `add ${esc((p.added_steps || []).join(', ') || 'steps')} to <b>${esc(p.name)}</b>` : `create the feature <b>${esc(p.name)}</b>`)).join('; ')}.</p>` : ''}
     ${impResultsHtml(r.last_approval)}
     <form class="cform" id="imp-review-form" onsubmit="return false"><ul class="imp-tree imp-root">${roots.map((i) => impItemEditor(i, items, kidsOf, lock)).join('')}</ul></form>
-  </section>`;
+  </section>${orphans}`;
 }
 
 function rerenderReview() {
@@ -734,7 +761,8 @@ async function reviewAction(kind) {
     const res = await fetch(`/api/import/review/${kind}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     const out = await res.json().catch(() => ({}));
     s.busy = null;
-    if (kind === 'discard') { importReview = { review: null, loaded: true, access: s.access }; render(); return; }
+    // Cleared only once the server has discarded it (it refuses while a check or approve runs).
+    if (kind === 'discard' && res.ok) { importReview = { review: null, loaded: true, access: s.access }; render(); loadImportReview(); return; }
     if (out.review) Object.assign(s, { review: out.review, fresh: out.fresh, ready: out.ready });
     if (!res.ok) s.error = out.message || out.error || `HTTP ${res.status}`;
     if (kind === 'approve' && res.ok) {
@@ -744,6 +772,15 @@ async function reviewAction(kind) {
       if (n('published')) load();
     }
   } catch (err) { s.busy = null; s.error = err.message; }
+  rerenderReview();
+}
+
+async function impOutboxAction(b) {
+  const key = b.dataset.obDiscard;
+  if (key && !confirm('Discard this? It has not been published and will be lost.')) return;
+  b.disabled = true;
+  await post(key ? `/api/features-outbox/${encodeURIComponent(key)}/discard` : '/api/features-outbox/retry').catch((err) => toast(err.message, true));
+  await loadImportReview();
   rerenderReview();
 }
 
@@ -783,6 +820,7 @@ function wireReview(root) {
     const b = ev.target.closest('button');
     if (!b) return;
     if (b.dataset.rv) return reviewAction(b.dataset.rv);
+    if (b.hasAttribute('data-ob-retry') || b.dataset.obDiscard) return impOutboxAction(b);
     if (b.dataset.evDel !== undefined) { const it = itemOf(b); if (it) { it.evidence = it.evidence.filter((_, i) => i !== Number(b.dataset.evDel)); saveReview(true); } }
     if (b.hasAttribute('data-ev-add')) addEvidence(b);
   });

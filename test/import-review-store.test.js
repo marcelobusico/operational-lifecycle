@@ -58,3 +58,67 @@ test('when a new project is not created at Approve, its features are not submitt
   assert.equal(f1.published, null);
   assert.deepEqual(f1.result.errors, [{ field: 'parent', message: 'its new project "Wallet" wasn\'t created; fix the project first' }]);
 });
+
+// Outbox files as the publisher writes them (src/features/publish.js).
+const outboxDir = () => path.join(process.env.LIFECYCLE_HOME, 'outbox', 'features');
+const writeEntry = (e) => { fs.mkdirSync(outboxDir(), { recursive: true }); fs.writeFileSync(path.join(outboxDir(), `${e.key}.json`), JSON.stringify(e)); };
+const writeOutcome = (key, outcome) => { fs.mkdirSync(path.join(outboxDir(), 'done'), { recursive: true }); fs.writeFileSync(path.join(outboxDir(), 'done', `${key}.json`), JSON.stringify({ key, outcome, at: new Date().toISOString() })); };
+const queuing = { submit: async (body) => ({ outcome: 'queued', key: body.op === 'create-project' ? 'k-proj' : 'k-feat', message: 'Not published yet.' }), discard: () => {} };
+
+test('a queued item is published only when the outbox recorded it published; a discarded or unknown entry puts it back in the review', async () => {
+  const store = createReviewStore({ app: { definitionsNow: async () => defs(), refresh: async () => {}, featurePublisher: queuing }, importer, review: noAi });
+  store.start('a1');
+  const r = await store.approve();
+  assert.deepEqual(r.results.map((x) => x.outcome), ['queued', 'queued']);
+  // Neither entry is in the outbox any more: the project was published, the feature discarded on its page.
+  writeOutcome('k-proj', 'published');
+  writeOutcome('k-feat', 'discarded');
+  const after = store.get().review.items;
+  const p1 = after.find((x) => x.ref === 'p1');
+  const f1 = after.find((x) => x.ref === 'f1');
+  assert.equal(p1.published.queued, false);
+  assert.equal(p1.result.outcome, 'published');
+  assert.equal(f1.published, null, 'a discarded edit is not shown as published');
+  assert.match(f1.result.message, /discarded/);
+  assert.equal(after.find((x) => x.ref === 's1').published, null, 'its step comes back with it');
+
+  // An entry gone with no record (e.g. older than a month): not claimed as published either.
+  const store2 = createReviewStore({ app: { definitionsNow: async () => defs(), refresh: async () => {}, featurePublisher: { ...queuing, submit: async (b) => ({ outcome: 'queued', key: `x-${b.op}` }) } }, importer, review: noAi });
+  store2.discard();
+  store2.start('a2');
+  await store2.approve();
+  const f = store2.get().review.items.find((x) => x.ref === 'f1');
+  assert.equal(f.published, null);
+  assert.match(f.result.message, /can't tell whether/);
+});
+
+test('an approved review with queued or failed items is not replaced without asking, even if it was never edited', async () => {
+  const store = createReviewStore({ app: { definitionsNow: async () => defs(), refresh: async () => {}, featurePublisher: queuing }, importer, review: noAi });
+  store.start('a1');
+  await store.approve();
+  writeEntry({ key: 'k-proj', op: 'create-project', kind: 'project', name: 'Wallet', via: 'import', state: 'pending', created_at: new Date().toISOString() });
+  writeEntry({ key: 'k-feat', op: 'create', feature_id: 'top-up', name: 'Top up', via: 'import', state: 'pending', created_at: new Date().toISOString() });
+  const again = store.start('a2');
+  assert.equal(again.outcome, 'has_review');
+  assert.match(again.message, /3 waiting for the shared repo/, 'the project, the feature and its step');
+  assert.equal(store.start('a2', { replace: true }).outcome, 'started');
+
+  // Failed items to fix: also asks.
+  const failing = { submit: async () => ({ outcome: 'conflict', key: 'k-x', message: 'Not published.' }), discard: () => {} };
+  const store2 = createReviewStore({ app: { definitionsNow: async () => defs(), refresh: async () => {}, featurePublisher: failing }, importer, review: noAi });
+  store2.discard();
+  store2.start('a1');
+  await store2.approve();
+  assert.equal(store2.start('a3').outcome, 'has_review');
+});
+
+test('outbox entries from an import that no review follows are listed with the review, so a waiting or refused project can be retried or discarded', async () => {
+  const store = createReviewStore({ app: { definitionsNow: async () => defs(), refresh: async () => {}, featurePublisher: queuing }, importer, review: noAi });
+  writeEntry({ key: 'old-proj', op: 'create-project', kind: 'project', feature_id: null, project_id: 'cards', name: 'Cards', via: 'import', state: 'conflict', message: 'cards was created by someone else.', created_at: new Date().toISOString() });
+  writeEntry({ key: 'form-edit', op: 'update', feature_id: 'checkout', name: 'Checkout', via: 'form', state: 'pending', created_at: new Date().toISOString() });
+  assert.deepEqual(store.get().outbox.map((e) => [e.key, e.kind, e.state]), [['old-proj', 'project', 'conflict']], 'without a review; edits from the form are not listed');
+  store.start('a1');
+  await store.approve();
+  writeEntry({ key: 'k-proj', op: 'create-project', kind: 'project', name: 'Wallet', via: 'import', state: 'pending', created_at: new Date().toISOString() });
+  assert.deepEqual(store.get().outbox.map((e) => e.key), ['old-proj'], 'entries the review follows are shown on its items instead');
+});

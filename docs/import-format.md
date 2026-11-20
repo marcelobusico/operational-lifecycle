@@ -108,8 +108,9 @@ so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full r
 
 **Review and approve…** under a finished proposal turns it into an editable review, saved in
 `~/.lifecycle/import-review.json` (one per machine) as it is edited, so leaving the screen, a reload or
-a LifeCycle restart keeps the edits. Starting a review of another analysis while one has unpublished
-edits asks first (409 `has_review`).
+a LifeCycle restart keeps the edits. Starting a review of another analysis asks first (409 `has_review`)
+while the current one has unpublished items that were edited or approved, or items waiting for the
+shared repo.
 
 Each item is the proposal item plus what the person can change: `level`, `parent`, `name`, `id`
 (projects and features: the file name), `description`, `owner`, `team` (steps), `target_date` and
@@ -146,15 +147,23 @@ with the conflict check. When the shared repo can't be reached they wait in the 
 too) and publish on a later refresh, in order. Each item gets `published: {kind, op, id, queued, key, at}`
 or, when it failed, `result: {outcome, message, errors}` and stays in the review to fix and approve
 again. `last_approval.results` lists each file with its outcome and a link to its page. A queued item
-follows its outbox entry (`key`): once the entry is gone it is published; if the entry ends in a
-conflict or failure, the entry is dropped and the item is back in the review with the error.
+follows its outbox entry (`key`). The publisher records how each entry left the outbox
+(`outbox/features/done/<key>.json`, kept a month): `published` marks the item published; `discarded`
+(e.g. Discard on the feature page), or no record, puts it back in the review to approve again. If the
+entry ends in a conflict or failure, the entry is dropped and the item is back in the review with the
+error. Entries are retried in the order they were made (their times on one machine are strictly
+increasing), so a project lands before its features and a feature before those that depend on it.
+Entries from an import that no review follows (it was discarded or replaced) are listed under the
+review as *Kept on this machine from an earlier import*, with Retry now and Discard: a new project has
+no page of its own to show them.
 While a check or approve runs, edits, discard and starting another review are refused (409 `busy`), and
 the screen locks the fields.
 
 ## API: review (local only)
 
-- `GET /api/import/review` → `{review, fresh, ready, busy, access}`; `fresh` is false after an edit
-  since the last check; `ready` counts the files Approve would write.
+- `GET /api/import/review` → `{review, fresh, ready, busy, access, outbox}`; `fresh` is false after an edit
+  since the last check; `ready` counts the files Approve would write; `outbox` lists the import entries
+  no review follows (`{key, op, kind, name, state, message, created_at}`).
 - `POST /api/import/review {analysis_id, replace?}` → starts a review of a finished analysis.
 - `PUT /api/import/review {revision, edits: [{ref, ...fields}]}` → saves edits (409 when another window
   saved a newer revision).
