@@ -47,7 +47,7 @@ let teamDelete = null; // { id, step: 'ask'|'decide'|'confirm_unowned'|'done', a
 const chatActions = new Map(); // action id -> { busy, result }
 
 // Nothing reloads on a timer. load() re-reads the shared repo and shows the sources as last read;
-// load({ live: true }) ("Refresh data") reads every source live (GitHub, deploys, flags, stores, Slack, Jira).
+// load({ live: true }) ("Refresh Data") reads every source live (GitHub, deploys, flags, stores, Slack, Jira).
 async function load({ live = false } = {}) {
   const btns = [$('#refresh'), $('#refresh-data')];
   const pill = $('#sync-status');
@@ -97,12 +97,12 @@ function tickSync() {
   pill.className = `sync-pill${d.stale ? ' stale' : ''}`;
   pill.title = `${head}${d.commit ? ` @ ${d.commit_short}` : ''} · ${read}`;
   pill.innerHTML = `<span class="dot"></span><span class="lbl">${esc(head)}${commit ? ` @ ${commit}` : ''} · ${esc(read)}</span>`;
-  // When the sources were last read live: the status on screen is from then until "Refresh data".
+  // When the sources were last read live: the status on screen is from then until "Refresh Data".
   const data = $('#data-status');
   const at = snapshot.sources_read?.read_at;
   data.hidden = !at;
   if (at) {
-    data.title = `PRs, deploys, flags, stores, Slack and Jira were read ${new Date(at).toLocaleString()}. Press Refresh data to read them again.`;
+    data.title = `PRs, deploys, flags, stores, Slack and Jira were read ${new Date(at).toLocaleString()}. Press Refresh Data to read them again.`;
     data.innerHTML = `<span class="lbl">Data read ${esc(ago(at))}</span>`;
   }
 }
@@ -318,7 +318,7 @@ function render() {
   }));
   const main = $('#main');
   if (!snapshot) {
-    main.innerHTML = '<div class="card empty"><strong>No data yet</strong>Check that LifeCycle is running, then press Refresh.</div>';
+    main.innerHTML = '<div class="card empty"><strong>No data yet</strong>Check that LifeCycle is running, then press Refresh View.</div>';
     renderChatDock();
     return;
   }
@@ -1718,7 +1718,7 @@ function notifyPanel() {
   if (!n) return '<p class="muted">Working out who will be notified…</p>';
   return `<ul class="notify">${n.owners.map((o) => `<li>${who(o.owner)}<span class="muted small">${o.features.map((f) => `${esc(f.as)} of ${esc(f.name)}${f.relation === 'depends on it' ? ' (depends on it)' : ''}`).join('; ')}</span></li>`).join('')}</ul>
     ${n.dependents.length ? `<p class="muted small">Also affected because they depend on it: ${esc(n.dependents.map((id) => snapshot.features.find((f) => f.feature.id === id)?.feature.name || id).join(', '))}.</p>` : ''}
-    <p class="muted small">They see it as a new alert the next time they open or refresh LifeCycle.</p>`;
+    <p class="muted small">They see it as a new alert the next time they open LifeCycle or press Refresh View.</p>`;
 }
 
 function renderChangeForm(mode, id) {
@@ -1995,7 +1995,7 @@ function renderFeatureEdit(mode, id, project = '') {
   const badLinks = d.steps.some((s) => ghLinks(s.add_github).bad.length);
   const canPublish = fresh && f.preview.valid && !f.preview.stale && !f.preview.review?.blocking && !badLinks && (mode === 'create' || f.preview.diff.length);
   return `<p class="kicker">${mode === 'create' ? `Add a ${kind}` : `Edit ${kind}`}</p><h1>${title}</h1>
-    <p class="lede">${`Publishing commits this definition straight to ${target} as your GitHub user. Every teammate's LifeCycle shows it on their next refresh. Status isn't edited here: it always comes from the live reads.`}</p>
+    <p class="lede">${`Publishing commits this definition straight to ${target} as your GitHub user. Every teammate's LifeCycle shows it on their next Refresh View. Status isn't edited here: it always comes from the live reads.`}</p>
     ${mode === 'create' ? termsHelp({ open: true }) : ''}
     ${pending.length ? `<div class="banner st-unavailable" role="status"><span class="ico">!</span><div><b>${pending[0].state === 'conflict' ? 'An earlier edit was refused because of a conflict' : 'An earlier edit is not published yet'}.</b> It is kept on this machine: ${esc(pending[0].message || 'waiting for the shared repo')}</div></div>` : ''}
     ${resultBox}
@@ -2369,7 +2369,7 @@ function homeItem({ icon, tone, title, meta, right, actions = '', href: link }) 
 function renderHome() {
   const fs = snapshot.features;
   if (!fs.length && !snapshot.projects.length) {
-    return `${fhead('LifeCycle', 'Home')}<div class="card empty section"><strong>No projects or features defined yet</strong>Add files under <code>projects/</code> and <code>features/</code> in <code>${esc(snapshot.definitions.source)}</code> and refresh.</div>`;
+    return `${fhead('LifeCycle', 'Home')}<div class="card empty section"><strong>No projects or features defined yet</strong>Add files under <code>projects/</code> and <code>features/</code> in <code>${esc(snapshot.definitions.source)}</code> and press Refresh View.</div>`;
   }
   const needs = [];
   for (const b of rootBlockers().filter((x) => !featureArchived(x.blocks?.[0]?.id ?? x.feature))) {

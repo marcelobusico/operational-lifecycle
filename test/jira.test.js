@@ -239,8 +239,8 @@ test('the feature editor attaches Jira tickets to a step, shows what is linked, 
 });
 
 // Nothing is read on a timer: a plain refresh reads only the shared repo and shows what the last
-// live read ("Refresh data") said, without calling Claude or GitHub for PRs, deploys or flags.
-test('a plain refresh reuses the last live read; Refresh data reads the sources again', async () => {
+// live read ("Refresh Data") said, without calling Claude or GitHub for PRs, deploys or flags.
+test('Refresh View reuses the last live read; Refresh Data reads the sources again', async () => {
   const calls = [];
   const urls = [];
   const fetchImpl = (u, o) => { urls.push(String(u)); return fetch(u, o); };
@@ -276,7 +276,28 @@ test('a plain refresh reuses the last live read; Refresh data reads the sources 
   assert.equal(feature(linked).steps[0].state, feature(live).steps[0].state);
   assert.ok(prKeys.every((k) => JSON.parse(fs.readFileSync(resultsFile, 'utf8'))[k]), 'and saved for the next plain refresh');
 
-  // Refresh data: read again, and the new state shows.
+  // A Jira ticket never read on this machine (and with no team snapshot) waits for Refresh Data.
+  const snapFile = [...w.gh.state.files.get(DATA).keys()].find((f) => f.startsWith('jira-snapshots/') && f.includes('BOOK-102'));
+  assert.ok(snapFile, 'the live read above committed a team snapshot for BOOK-102');
+  const snapText = w.gh.state.files.get(DATA).get(snapFile);
+  w.gh.state.files.get(DATA).delete(snapFile);
+  const resultsText = fs.readFileSync(resultsFile, 'utf8');
+  try {
+    const noTicket = JSON.parse(resultsText);
+    const ticketKeys = Object.keys(noTicket).filter((k) => k.includes('BOOK-102'));
+    assert.ok(ticketKeys.length, 'BOOK-102 was saved by the live read');
+    for (const k of ticketKeys) delete noTicket[k];
+    fs.writeFileSync(resultsFile, JSON.stringify(noTicket));
+    const unread = ev(await mk(moved).refresh(), 'ui', 'BOOK-102');
+    assert.equal(calls.length, 1, 'still no Claude run');
+    assert.equal(unread.state, 'unavailable');
+    assert.match(JSON.stringify(unread), /Not read on this machine yet\. Press Refresh Data to read it\./);
+  } finally {
+    w.gh.state.files.get(DATA).set(snapFile, snapText);
+    fs.writeFileSync(resultsFile, resultsText);
+  }
+
+  // Refresh Data: read again, and the new state shows.
   const again = await mk(moved).refresh({ live: true });
   assert.equal(calls.length, 2);
   assert.equal(again.sources_read.live, true);

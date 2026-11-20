@@ -1460,7 +1460,7 @@ a, a:hover, a:focus, a:focus-visible, a:visited, .linkbtn, .linkbtn:hover, .link
 .own-feat.other { background: var(--card); border-style: dashed; }
 .own-kind { color: var(--muted-foreground); font-size: 11px; margin-right: 5px; }
 
-/* Top bar: only Alerts, in the right corner. Live status and Refresh live in the sidebar. */
+/* Top bar: only Alerts, in the right corner. Live status and the Refresh View / Refresh Data buttons live in the sidebar. */
 .topbar { justify-content: flex-end; padding: 10px 32px; }
 .top-alerts { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 999px;
   border: 1px solid var(--border); background: var(--card); color: var(--foreground); font-weight: 550; font-size: 13.5px; }

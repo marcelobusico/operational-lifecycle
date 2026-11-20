@@ -64,12 +64,12 @@ function createRestConnection({ apiUrl, credentials, timeoutMs, fetchImpl }) {
     try {
       res = await fetchImpl(`${apiUrl}${route}`, { headers: { authorization: `Bearer ${token}`, accept: 'application/json', 'user-agent': 'lifecycle-local' }, signal: AbortSignal.timeout(timeoutMs) });
     } catch (err) {
-      throw failure('unreachable', 'unreachable', `App Store Connect could not be reached right now (${err.cause?.code || err.name}). LifeCycle tries again on the next Refresh.`);
+      throw failure('unreachable', 'unreachable', `App Store Connect could not be reached right now (${err.cause?.code || err.name}). LifeCycle tries again on the next Refresh Data.`);
     }
     if (res.status === 401) throw failure('no_access', 'rejected', `App Store Connect refused your API key (revoked, or wrong issuer id / key id), so LifeCycle can't read ${what}. ${KEY_HELP}`, 401);
     if (res.status === 403) throw failure('no_access', 'no_access', `Your App Store Connect API key can't see ${what}: LifeCycle needs ${ACCESS_NEEDED}. ${KEY_HELP}`, 403);
     if (res.status === 404) throw failure('not_found', 'not_found', `App Store Connect has no ${what}.`, 404);
-    if (!res.ok) throw failure('unreachable', 'unreachable', `App Store Connect could not be read right now (it answered HTTP ${res.status}). LifeCycle tries again on the next Refresh.`, res.status);
+    if (!res.ok) throw failure('unreachable', 'unreachable', `App Store Connect could not be read right now (it answered HTTP ${res.status}). LifeCycle tries again on the next Refresh Data.`, res.status);
     try {
       return await res.json();
     } catch {

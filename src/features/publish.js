@@ -205,7 +205,7 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
     drop(entry.key);
     logAlertEvent({ event: 'feature_edit_published', feature: entry.feature_id, source: 'feature-edit', id: entry.key, detail: `${entry.op}${diff?.length ? ` (${summary(diff)})` : ''} by ${by}` });
     return { outcome: 'published', key: entry.key, op: entry.op, id: entry.feature_id, by, diff,
-      message: `Committed to ${where()} as ${by}. Teammates see it on their next refresh.` };
+      message: `Committed to ${where()} as ${by}. Teammates see it on their next Refresh View.` };
   }
 
   // op: create | update | delete. base_hash: hash of the file as the editor opened it (update/delete).

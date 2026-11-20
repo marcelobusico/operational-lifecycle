@@ -100,7 +100,7 @@ export function createTeamPublisher({ featurePublisher, whoAmI }) {
       }
       logAlertEvent({ event: 'team_edit_published', feature: '-', source: 'team-edit', id: built.team.id, detail: `${op} by ${by}` });
       return { outcome: 'published', op, id: built.team.id, team: { id: built.team.id, name: built.team.name }, by, diff: built.diff, path: built.path,
-        message: `Committed ${built.path} to ${io.where()} as ${by}. Teammates see it on their next refresh.` };
+        message: `Committed ${built.path} to ${io.where()} as ${by}. Teammates see it on their next Refresh View.` };
     }
 
     // Delete: decide first what happens to what the team owns and to what points to it.
