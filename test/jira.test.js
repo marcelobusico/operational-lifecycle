@@ -278,16 +278,22 @@ test('Refresh View reuses the last live read; Refresh Data reads the sources aga
 
   // A Jira ticket never read on this machine (and with no team snapshot) waits for Refresh Data.
   const snapFile = [...w.gh.state.files.get(DATA).keys()].find((f) => f.startsWith('jira-snapshots/') && f.includes('BOOK-102'));
-  const snapText = snapFile && w.gh.state.files.get(DATA).get(snapFile);
-  if (snapFile) w.gh.state.files.get(DATA).delete(snapFile);
-  const noTicket = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
-  for (const k of Object.keys(noTicket).filter((k) => k.includes('BOOK-102'))) delete noTicket[k];
-  fs.writeFileSync(resultsFile, JSON.stringify(noTicket));
-  const unread = ev(await mk(moved).refresh(), 'ui', 'BOOK-102');
-  assert.equal(calls.length, 1, 'still no Claude run');
-  assert.equal(unread.state, 'unavailable');
-  assert.match(JSON.stringify(unread), /Not read on this machine yet\. Press Refresh Data to read it\./);
-  if (snapFile) w.gh.state.files.get(DATA).set(snapFile, snapText);
+  assert.ok(snapFile, 'the live read above committed a team snapshot for BOOK-102');
+  const snapText = w.gh.state.files.get(DATA).get(snapFile);
+  w.gh.state.files.get(DATA).delete(snapFile);
+  try {
+    const noTicket = JSON.parse(fs.readFileSync(resultsFile, 'utf8'));
+    const ticketKeys = Object.keys(noTicket).filter((k) => k.includes('BOOK-102'));
+    assert.ok(ticketKeys.length, 'BOOK-102 was saved by the live read');
+    for (const k of ticketKeys) delete noTicket[k];
+    fs.writeFileSync(resultsFile, JSON.stringify(noTicket));
+    const unread = ev(await mk(moved).refresh(), 'ui', 'BOOK-102');
+    assert.equal(calls.length, 1, 'still no Claude run');
+    assert.equal(unread.state, 'unavailable');
+    assert.match(JSON.stringify(unread), /Not read on this machine yet\. Press Refresh Data to read it\./);
+  } finally {
+    w.gh.state.files.get(DATA).set(snapFile, snapText);
+  }
 
   // Refresh Data: read again, and the new state shows.
   const again = await mk(moved).refresh({ live: true });

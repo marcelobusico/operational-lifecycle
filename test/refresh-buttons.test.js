@@ -33,13 +33,13 @@ function filesUnder(dir, exts) {
 test('the toolbar shows one "Refresh View" and one "Refresh Data" button, each with its tooltip', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const button = (id) => html.match(new RegExp(`<button id="${id}"[^>]*>[\\s\\S]*?</button>`))[0];
-  assert.match(button('refresh'), /title="Re-reads the shared repo only"/);
+  assert.match(button('refresh'), /title="Re-reads the shared repo only\. The status from the sources stays as last read; press Refresh Data to read them again\."/);
   assert.match(button('refresh'), /<span class="lbl">Refresh View<\/span>/);
-  assert.match(button('refresh-data'), /title="Reads PRs, deploys, flags, stores and Jira live"/);
+  assert.match(button('refresh-data'), /title="Reads PRs, deploys, flags, stores, Slack and Jira live \(Slack and Jira through Claude, which uses tokens\)\."/);
   assert.match(button('refresh-data'), /<span class="lbl">Refresh Data<\/span>/);
   assert.equal(html.match(/>Refresh View</g).length, 1);
   assert.equal(html.match(/>Refresh Data</g).length, 1);
-  assert.doesNotMatch(html, /disabled/, 'neither button starts disabled');
+  for (const id of ['refresh', 'refresh-data']) assert.doesNotMatch(button(id), /\bdisabled\b/, `${id} doesn't start disabled`);
 });
 
 test('no UI source or user-facing doc still says "Refresh data" or names a bare "Refresh" button', () => {
@@ -53,7 +53,11 @@ test('no UI source or user-facing doc still says "Refresh data" or names a bare 
   for (const f of files) {
     fs.readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
       // "Refresh" capitalised as a name, not followed by View or Data (e.g. "press Refresh.").
-      if (/Refresh data/.test(line) || /\bRefresh\b(?! (View|Data)\b)/.test(line)) bad.push(`${path.relative(ROOT, f)}:${i + 1}: ${line.trim()}`);
+      // An instruction to "refresh" in lower case ("and refresh.", "next refresh.") must name the button.
+      const instruction = /\b(press|and|then|or|next) refresh\b(?! (view|data)\b)/i;
+      // Code comments are for developers, not users: leave them out of that check.
+      const text = /^\s*(\/\/|\*)/.test(line) ? '' : line.replace(/\/\*.*?\*\/|<!--.*?-->|\s\/\/\s.*$/g, '');
+      if (/Refresh data/.test(line) || /\bRefresh\b(?! (View|Data)\b)/.test(line) || instruction.test(text)) bad.push(`${path.relative(ROOT, f)}:${i + 1}: ${line.trim()}`);
     });
   }
   assert.deepEqual(bad, []);

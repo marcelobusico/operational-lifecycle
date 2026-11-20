@@ -313,7 +313,7 @@ Which platform your LifeCycle reads, strongest first:
    platform question follows the team, including later changes to `team.yaml`.
 
 A local config that only pointed at Flagsmith because nothing was ever chosen (older installs saved
-`flagPlatform: "flagsmith"` without a project) moves to the team's platform on the next refresh.
+`flagPlatform: "flagsmith"` without a project) moves to the team's platform on the next Refresh View or Refresh Data.
 Home then shows a one-time notice, **"Feature flags are now read from Statsig"**, until you click
 **Got it**.
 
@@ -372,7 +372,7 @@ and reordering steps), dependencies, services and flags.
 - **Publish** commits `features/<id>.yaml` straight to LifeCycle-Data `main` with your GitHub
   credentials (no pull request), so the repo history shows who changed what and when. Only the
   fields you changed are touched: a step's evidence and comments are kept.
-  Every teammate sees the edit on their next refresh.
+  Every teammate sees the edit on their next Refresh View.
 - If someone else saved the same feature after you opened it, nothing is overwritten. You're told
   who changed it, your edit is kept on your machine, and **Apply my edit to the latest version**
   re-applies your changed fields on top of theirs.
@@ -410,7 +410,7 @@ through the same publish path as the form.
 
 **By hand**: add or edit `features/<id>.yaml`, run `npm run validate -- <file>`, then open a PR to
 LifeCycle-Data. After it merges, everyone sees
-it on their next refresh.
+it on their next Refresh View.
 
 ## Status for other tools
 

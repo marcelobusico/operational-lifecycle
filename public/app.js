@@ -1718,7 +1718,7 @@ function notifyPanel() {
   if (!n) return '<p class="muted">Working out who will be notified…</p>';
   return `<ul class="notify">${n.owners.map((o) => `<li>${who(o.owner)}<span class="muted small">${o.features.map((f) => `${esc(f.as)} of ${esc(f.name)}${f.relation === 'depends on it' ? ' (depends on it)' : ''}`).join('; ')}</span></li>`).join('')}</ul>
     ${n.dependents.length ? `<p class="muted small">Also affected because they depend on it: ${esc(n.dependents.map((id) => snapshot.features.find((f) => f.feature.id === id)?.feature.name || id).join(', '))}.</p>` : ''}
-    <p class="muted small">They see it as a new alert the next time they open or refresh LifeCycle.</p>`;
+    <p class="muted small">They see it as a new alert the next time they open LifeCycle or press Refresh View.</p>`;
 }
 
 function renderChangeForm(mode, id) {
@@ -1995,7 +1995,7 @@ function renderFeatureEdit(mode, id, project = '') {
   const badLinks = d.steps.some((s) => ghLinks(s.add_github).bad.length);
   const canPublish = fresh && f.preview.valid && !f.preview.stale && !f.preview.review?.blocking && !badLinks && (mode === 'create' || f.preview.diff.length);
   return `<p class="kicker">${mode === 'create' ? `Add a ${kind}` : `Edit ${kind}`}</p><h1>${title}</h1>
-    <p class="lede">${`Publishing commits this definition straight to ${target} as your GitHub user. Every teammate's LifeCycle shows it on their next refresh. Status isn't edited here: it always comes from the live reads.`}</p>
+    <p class="lede">${`Publishing commits this definition straight to ${target} as your GitHub user. Every teammate's LifeCycle shows it on their next Refresh View. Status isn't edited here: it always comes from the live reads.`}</p>
     ${mode === 'create' ? termsHelp({ open: true }) : ''}
     ${pending.length ? `<div class="banner st-unavailable" role="status"><span class="ico">!</span><div><b>${pending[0].state === 'conflict' ? 'An earlier edit was refused because of a conflict' : 'An earlier edit is not published yet'}.</b> It is kept on this machine: ${esc(pending[0].message || 'waiting for the shared repo')}</div></div>` : ''}
     ${resultBox}
@@ -2369,7 +2369,7 @@ function homeItem({ icon, tone, title, meta, right, actions = '', href: link }) 
 function renderHome() {
   const fs = snapshot.features;
   if (!fs.length && !snapshot.projects.length) {
-    return `${fhead('LifeCycle', 'Home')}<div class="card empty section"><strong>No projects or features defined yet</strong>Add files under <code>projects/</code> and <code>features/</code> in <code>${esc(snapshot.definitions.source)}</code> and refresh.</div>`;
+    return `${fhead('LifeCycle', 'Home')}<div class="card empty section"><strong>No projects or features defined yet</strong>Add files under <code>projects/</code> and <code>features/</code> in <code>${esc(snapshot.definitions.source)}</code> and press Refresh View.</div>`;
   }
   const needs = [];
   for (const b of rootBlockers().filter((x) => !featureArchived(x.blocks?.[0]?.id ?? x.feature))) {
