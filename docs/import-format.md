@@ -129,8 +129,8 @@ stay in the review, unpublished) and `duplicate_choice` (`skip`, `create` or `me
   file, no new file); a merged feature with no step left to add is an error (nothing to publish). On a
   project, its features go into the existing project: the project item shows `merged` and is marked
   published once each of its included features is in the shared repo (not while one waits in the
-  outbox; with none included there is nothing to add). It goes back to unpublished if one of them
-  comes back to the review.
+  outbox). With none included there is nothing to add: Approve marks it so, never a load, so its choice
+  can still change until then. It goes back to unpublished if one of them comes back to the review.
 
 **Check** compiles the review into the drafts the New feature form sends (`src/import/approve.js`) and
 runs the same validation and AI product review (`src/features/review.js`) on each, against the defined
@@ -144,7 +144,8 @@ depend on that feature); a step can't be added to a feature that waits, until it
 reported as not run and valid items are ready. `plan` lists the files Approve would write.
 
 **Approve** (write access to LifeCycle-Data only; otherwise 403 `read_only` with the reason) refreshes
-the definitions, checks again, then publishes the ready items through the feature publisher
+the definitions (which retries the outbox), follows its outbox entries again (what that retry refused
+is back in the review, not counted as defined), checks again, then publishes the ready items through the feature publisher
 (`src/features/publish.js`): new projects first, then new features in dependency order, then additions
 to existing features; one commit per file under the person's GitHub identity ("from LifeCycle import"),
 with the conflict check. The review is saved after each file, so what was committed stays recorded
@@ -152,7 +153,8 @@ if a later step fails (a failed re-read after publishing leaves `last_approval.n
 Check). A task is marked with its step only if it was included and valid (its evidence went into the
 file). When the shared repo can't be reached they wait in the local outbox (projects
 too) and publish on a later refresh, in order. An entry that needs a new project or feature still in
-the outbox (waiting, or refused) stays waiting, and a feature's project must exist when it is
+the outbox (waiting, or refused) stays waiting (a retry reports a refused one held back as
+`not_published`, a waiting one as `queued`), and a feature's project must exist when it is
 written, so a refused project never leaves its features pointing at nothing. Each item gets `published: {kind, op, id, queued, key, at}`
 or, when it failed, `result: {outcome, message, errors}` and stays in the review to fix and approve
 again. `last_approval.results` lists each file with its outcome and a link to its page. A queued item

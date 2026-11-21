@@ -203,3 +203,51 @@ test('features of a project still waiting in the outbox can be checked and appro
   await store.approve();
   assert.deepEqual(submitted.at(-1), ['create', 'wallet', ['wallet']]);
 });
+
+test('what Approve\'s own refresh refused in the outbox is back in the review, so nothing is published depending on it', async () => {
+  const items = [...importer.progress().proposal.items,
+    { ref: 'f2', level: 'feature', name: 'Refunds', parent: 'p1', owner: 'bo' },
+    { ref: 's2', level: 'step', name: 'Ledger', parent: 'f2', owner: 'cy', done_when: 'deployed' }];
+  const sent = [];
+  const fp = { submit: async (body) => {
+    const key = body.op === 'create-project' ? 'k-proj' : `k-${body.draft.id}`;
+    sent.push(body.op === 'create-project' ? body.draft.name : body.draft.name);
+    writeEntry({ key, op: body.op, state: 'pending', via: 'import', created_at: new Date().toISOString() });
+    return { outcome: 'queued', key, message: 'Not published yet.' };
+  }, discard: (key) => fs.rmSync(path.join(outboxDir(), `${key}.json`), { force: true }) };
+  let refreshes = 0;
+  // The second Approve's refresh retries the outbox: Top up is refused there.
+  const refresh = async () => { if (++refreshes === 2) writeEntry({ key: 'k-top-up', op: 'create', state: 'failed', message: 'depends_on: "gone" is not a defined feature', via: 'import', created_at: new Date().toISOString() }); };
+  const store = storeWith(items, fp, { app: { refresh } });
+  const { review } = store.start('a1');
+  store.update({ revision: review.revision, edits: [{ ref: 'f2', included: false, depends_on: ['ref:f1'] }] });
+  await store.approve();
+  assert.deepEqual(sent, ['Wallet', 'Top up']);
+  const now = store.get().review;
+  store.update({ revision: now.revision, edits: [{ ref: 'f2', included: true }] });
+  sent.length = 0;
+  const r = await store.approve();
+  assert.deepEqual(sent, ['Top up', 'Refunds'], 'Top up is sent again before Refunds, not counted as waiting');
+  assert.equal(r.review.items.find((x) => x.ref === 'p1').published.key, 'k-proj', 'the project still waits');
+});
+
+test('a project merged into an existing one with no feature included is not marked done before Approve; its choice can still change', async () => {
+  const items = [
+    { ref: 'p1', level: 'project', name: 'Wallet', owner: 'bo', possible_duplicate: { id: 'wallet', name: 'Wallet', kind: 'project' } },
+    { ref: 'f1', level: 'feature', name: 'Top up', parent: 'p1', owner: 'bo' },
+    { ref: 's1', level: 'step', name: 'API', parent: 'f1', owner: 'cy', done_when: 'deployed' },
+  ];
+  const store = storeWith(items, { submit: async () => ({ outcome: 'queued', key: 'k' }), discard: () => {} }, { projectDefs: [{ id: 'wallet', name: 'Wallet' }] });
+  const { review } = store.start('a1');
+  store.update({ revision: review.revision, edits: [{ ref: 'p1', duplicate_choice: 'merge' }, { ref: 'f1', included: false }] });
+  const before = store.get().review;
+  assert.equal(before.items.find((x) => x.ref === 'p1').published, null, 'loading does not settle it');
+  store.update({ revision: before.revision, edits: [{ ref: 'p1', duplicate_choice: 'skip' }] });
+  assert.equal(store.get().review.items.find((x) => x.ref === 'p1').duplicate_choice, 'skip', 'still editable');
+  store.update({ revision: store.get().review.revision, edits: [{ ref: 'p1', duplicate_choice: 'merge' }] });
+  const r = await store.approve();
+  const p1 = r.review.items.find((x) => x.ref === 'p1');
+  assert.equal(p1.published.op, 'merge');
+  assert.match(p1.result.message, /Nothing to add/);
+  assert.equal(store.get().review.items.find((x) => x.ref === 'p1').published.op, 'merge', 'and stays so on the next load');
+});

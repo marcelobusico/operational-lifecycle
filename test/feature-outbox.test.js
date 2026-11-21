@@ -114,3 +114,18 @@ test('Retry with keys tries only those entries; Discard removes an entry file th
   assert.equal(fs.existsSync(path.join(dir, 'broken-1.json')), false);
   assert.equal(featureOutboxOutcome('broken-1').outcome, 'discarded');
 });
+
+test('a failed entry held back by a retry is reported as not published, not as queued', async () => {
+  const { state, fp } = switchable();
+  const withP = { ...defs, projectDefs: [{ id: 'wallet', name: 'Wallet' }] };
+  await fp.submit({ op: 'create-project', draft: { name: 'Wallet' }, via: 'import' }, { defs, files: defs.files });
+  const f = await fp.submit({ op: 'create', draft: draft('Top up', { project: 'wallet' }), via: 'import' }, { defs: withP, files: defs.files, review: noReview });
+  const file = path.join(process.env.LIFECYCLE_HOME, 'outbox', 'features', `${f.key}.json`);
+  fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), state: 'failed' }));
+  state.files.set('projects/wallet.yaml', 'id: wallet\nname: Wallet\n'); // the project's entry is refused: conflict
+  state.down = false;
+  const r = await fp.flush({ ...defs, projectDefs: [] }, { all: true });
+  assert.deepEqual(r.map((x) => x.outcome), ['conflict', 'not_published']);
+  assert.match(r[1].message, /waits for the project wallet/);
+  assert.equal(listFeatureOutbox()[1].state, 'failed');
+});

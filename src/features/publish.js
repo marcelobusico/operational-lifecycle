@@ -319,7 +319,8 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
         : [];
       if (!due || needs.length) {
         hold(e);
-        if (due) results.push({ outcome: 'queued', key: e.key, message: `Not published yet: it waits for the ${needs[0]}, which is not published yet.` });
+        // A failed entry stays failed: say so, rather than "queued" while the list shows it refused.
+        if (due) results.push({ outcome: e.state === 'failed' ? 'not_published' : 'queued', key: e.key, message: `Not published yet: it waits for the ${needs[0]}, which is not published yet.` });
         continue;
       }
       const r = await attempt(e, known);

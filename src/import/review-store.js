@@ -22,18 +22,19 @@ export function createReviewStore({ app, importer, review }) {
   // review keeps the edit, so Approve can publish it again; a Check shows one that is already in the
   // shared repo as already defined). Not while a check or approve runs: it saves the copy it loaded.
   // A project merged into an existing one is done once each of its included features is in the shared
-  // repo (not just waiting in the outbox); with none included, there is nothing to add. Undone if one
-  // of them comes back to the review. Returns whether anything changed.
-  function settleMerged(r) {
+  // repo (not just waiting in the outbox). With none included there is nothing to add, but only Approve
+  // (final) says so: settled on a load, it would lock the project's choice before anything was approved.
+  // Undone if one of them comes back to the review. Returns whether anything changed.
+  function settleMerged(r, { final = false } = {}) {
     let changed = false;
     for (const it of r.items.filter((x) => x.level === 'project' && x.included && x.duplicate_choice === 'merge' && x.possible_duplicate?.kind === 'project')) {
       const kids = r.items.filter((x) => x.parent === it.ref && x.included && !(x.possible_duplicate && x.duplicate_choice === 'skip'));
-      const done = kids.every((x) => x.published && !x.published.queued);
+      const done = (kids.length || final) && kids.every((x) => x.published && !x.published.queued);
       if (done && !it.published) {
         it.published = { kind: 'project', op: 'merge', id: it.possible_duplicate.id, queued: false, at: new Date().toISOString() };
         it.result = { outcome: 'published', message: kids.length ? `Its features are in the existing project ${it.possible_duplicate.name}.` : `Nothing to add to the existing project ${it.possible_duplicate.name}: none of its features is included.` };
         changed = true;
-      } else if (!done && it.published?.op === 'merge') {
+      } else if (!done && kids.length && it.published?.op === 'merge') {
         it.published = null;
         it.result = null;
         changed = true;
@@ -42,8 +43,9 @@ export function createReviewStore({ app, importer, review }) {
     return changed;
   }
 
-  function sync(r) {
-    if (busy || !r) return r;
+  // force: Approve's own re-sync after its refresh (that refresh may have published or refused them).
+  function sync(r, { force = false } = {}) {
+    if ((busy && !force) || !r) return r;
     const queued = r.items.filter((it) => it.published?.queued && it.published.key);
     if (!queued.length) { if (settleMerged(r)) save(r); return r; }
     const entries = new Map(listFeatureOutbox().map((e) => [e.key, e]));
@@ -168,6 +170,8 @@ export function createReviewStore({ app, importer, review }) {
     try {
       const fp = app.featurePublisher;
       await app.refresh(); // check and publish against the definitions as they are now
+      // That refresh retried the outbox: what it refused is back in the review, not counted as defined.
+      sync(r, { force: true });
       const defs = await app.definitionsNow();
       const c = await check(r, defs);
       // What this review already sent to the outbox counts as defined (its features go after it there).
@@ -226,7 +230,7 @@ export function createReviewStore({ app, importer, review }) {
           : { result: { outcome: res.outcome, message: res.message, errors: errors.filter((e) => e.ref === it.ref).map(({ field, message }) => ({ field, message })) } }), c);
         save(r);
       }
-      settleMerged(r);
+      settleMerged(r, { final: true });
       save(r);
 
       // What is now in LifeCycle-Data: re-read it so the Roadmap shows the new features. If that fails,
