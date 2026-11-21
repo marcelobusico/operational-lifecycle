@@ -600,6 +600,12 @@ function impParentOptions(it, items) {
   return opts;
 }
 
+// The link to a published item's page; none while it waits in the outbox (its page would say "Not defined").
+function impOpenLink(pub) {
+  if (!pub || pub.queued) return '';
+  return `<a href="${pub.kind === 'project' ? projHref(pub.id) : href(pub.id)}">${pub.op === 'update' ? 'Open the updated feature' : `Open ${esc(pub.kind)}`}</a>`;
+}
+
 function impItemEditor(it, items, kidsOf, ro) {
   const st = impState(it);
   const lock = ro || Boolean(it.published);
@@ -618,7 +624,7 @@ function impItemEditor(it, items, kidsOf, ro) {
       <select data-f="level" aria-label="Level"${dis}>${['project', 'feature', 'step', 'task'].map((l) => `<option value="${l}"${l === it.level ? ' selected' : ''}>${IMP_LEVEL[l]}</option>`).join('')}</select>
       <b class="imp-nm">${esc(it.name || '(no name)')}</b>
       ${st ? `<span class="badge ${IMP_STATE_CLS[st] || ''}">${esc(IMP_STATE[st] || st)}</span>` : ''}
-      ${pub ? `<a href="${pub.kind === 'project' ? projHref(pub.id) : href(pub.id)}">${pub.op === 'update' ? 'Open the updated feature' : `Open ${esc(pub.kind)}`}</a>` : ''}
+      ${impOpenLink(pub)}
     </div>
     ${it.check?.reason && !pub ? `<p class="small muted">${esc(it.check.reason)}</p>` : ''}
     ${result}

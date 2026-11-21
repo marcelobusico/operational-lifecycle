@@ -189,12 +189,13 @@ export function createReviewStore({ app, importer, review }) {
       const handed = (res) => res.outcome === 'published' || res.outcome === 'queued';
       const fail = (res) => { if (res.key) fp.discard(res.key); }; // the review keeps the edit; no second copy in the outbox
 
+      // link: only once it is in the shared repo; a page for one still waiting would say "Not defined".
       for (const p of c.projects.filter((x) => x.ready)) {
         const res = await fp.submit({ op: 'create-project', draft: p.draft, via: 'import' }, { defs: local, files: local.files, review: null });
         const ok = handed(res);
         if (ok) { createdProjects.add(p.draft.id); local.projectDefs.push(res.project || { id: p.draft.id, name: p.draft.name }); }
         else fail(res);
-        results.push({ kind: 'project', op: 'create', id: p.draft.id, name: p.draft.name, refs: [p.ref], outcome: res.outcome, message: res.message, link: ok ? `#/project/${p.draft.id}` : null });
+        results.push({ kind: 'project', op: 'create', id: p.draft.id, name: p.draft.name, refs: [p.ref], outcome: res.outcome, message: res.message, link: res.outcome === 'published' ? `#/project/${p.draft.id}` : null });
         record(r, [p.ref], () => (ok
           ? { published: { kind: 'project', op: 'create', id: p.draft.id, queued: res.outcome === 'queued', key: res.key || null, at }, result: { outcome: res.outcome, message: res.message } }
           : { result: { outcome: res.outcome, message: res.message, errors: (res.errors || []).map((e) => ({ field: e.field, message: e.message })) } }), c);
@@ -223,7 +224,7 @@ export function createReviewStore({ app, importer, review }) {
           if (f) local.featureDefs = [...local.featureDefs.filter((x) => x.id !== f.id), f];
           createdFeatures.add(u.id);
         } else fail(res);
-        results.push({ kind: 'feature', op: u.op, id: u.id, name, refs: u.refs, outcome: res.outcome, message: res.message, link: ok ? `#/feature/${u.id}` : null });
+        results.push({ kind: 'feature', op: u.op, id: u.id, name, refs: u.refs, outcome: res.outcome, message: res.message, link: res.outcome === 'published' ? `#/feature/${u.id}` : null });
         const errors = (res.errors || []).map((e) => { const [ref, field] = errorTarget(u, e.field); return { ref, field, message: e.message }; });
         record(r, u.refs, (it) => (ok
           ? { published: { kind: 'feature', op: u.op, id: u.id, queued: res.outcome === 'queued', key: res.key || null, at }, result: { outcome: res.outcome, message: res.message } }

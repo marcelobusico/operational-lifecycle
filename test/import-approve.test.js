@@ -223,7 +223,7 @@ test('a step of a feature still waiting in the outbox says it waits, and a featu
   const by = (ref) => r.items.find((x) => x.ref === ref);
   assert.equal(by('f2').check.state, 'ready', 'its project and the feature it depends on wait in the outbox');
   assert.deepEqual(c.features.map((u) => u.id), ['refunds'], 'no edit of the waiting feature');
-  assert.deepEqual(by('s1').check.errors, [{ field: 'parent', message: 'its feature "Top up" is waiting for the shared repo; Check again once it is published' }]);
+  assert.deepEqual(by('s1').check.errors, [{ field: 'parent', message: 'its feature "Top up" is waiting for the shared repo: it is published on the next Refresh View once the repo is reachable; then press Check' }]);
 });
 
 test('Check and Approve don\'t run on the older copy when the last edits could not be saved', async () => {
@@ -249,4 +249,14 @@ test('the earlier-import list offers Retry only where retrying can help', async 
   assert.doesNotMatch(html, /data-ob-retry="a"/);
   assert.match(html, /data-ob-retry="b"/);
   assert.match(html, /data-ob-discard="a"/);
+});
+
+test('a published item links to its page; one still waiting in the outbox has no link yet', async () => {
+  const js = await appJs();
+  const link = new Function('esc', 'href', 'projHref', `${js.slice(js.indexOf('function impOpenLink'), js.indexOf('function impItemEditor'))}; return impOpenLink;`)(
+    (x) => String(x), (id) => `#/feature/${id}`, (id) => `#/project/${id}`);
+  assert.equal(link({ kind: 'feature', op: 'create', id: 'top-up', queued: true }), '');
+  assert.equal(link({ kind: 'feature', op: 'create', id: 'top-up', queued: false }), '<a href="#/feature/top-up">Open feature</a>');
+  assert.equal(link({ kind: 'project', op: 'create', id: 'wallet', queued: false }), '<a href="#/project/wallet">Open project</a>');
+  assert.equal(link(null), '');
 });

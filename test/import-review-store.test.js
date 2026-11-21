@@ -70,6 +70,7 @@ test('a queued item is published only when the outbox recorded it published; a d
   store.start('a1');
   const r = await store.approve();
   assert.deepEqual(r.results.map((x) => x.outcome), ['queued', 'queued']);
+  assert.deepEqual(r.results.map((x) => x.link), [null, null], 'no link to a page that would say "Not defined" yet');
   // Neither entry is in the outbox any more: the project was published, the feature discarded on its page.
   writeOutcome('k-proj', 'published');
   writeOutcome('k-feat', 'discarded');

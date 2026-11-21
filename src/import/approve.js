@@ -214,7 +214,7 @@ export function compileReview(review, defs) {
     const p = parentOf(it);
     const u = unitOfFeature(p);
     if (!u) {
-      if (p?.waiting) problem(it.ref, 'parent', `its feature "${p.waiting.name}" is waiting for the shared repo; Check again once it is published`);
+      if (p?.waiting) problem(it.ref, 'parent', `its feature "${p.waiting.name}" is waiting for the shared repo: it is published on the next Refresh View once the repo is reachable; then press Check`);
       else if (!(p?.kind === 'ref' && problems.has(p.item.ref))) problem(it.ref, 'parent', p?.kind === 'existing' ? `"${p.id}" is not a defined feature; pick another` : 'a step belongs to a feature: pick one');
       continue;
     }

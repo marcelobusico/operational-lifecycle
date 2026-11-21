@@ -140,7 +140,7 @@ AI contradiction), `excluded`, `skipped` or `merged`. Ambiguities are shown as s
 step or task is ready when the feature it lands in is. A new feature is not ready while its new project,
 or a proposed feature it depends on, is not ready (the error is on its `parent` or `depends_on`). A project or
 feature of this review that waits in the outbox counts as defined (a feature can go in that project or
-depend on that feature); a step can't be added to a feature that waits, until it is published. Without a reachable AI provider the review is
+depend on that feature); a step can't be added to a feature that waits until it is published (on the next Refresh View once the repo is reachable; then Check). Without a reachable AI provider the review is
 reported as not run and valid items are ready. `plan` lists the files Approve would write.
 
 **Approve** (write access to LifeCycle-Data only; otherwise 403 `read_only` with the reason) refreshes
@@ -157,7 +157,7 @@ the outbox (waiting, or refused) stays waiting (a retry reports a refused one he
 `not_published`, a waiting one as `queued`), and a feature's project must exist when it is
 written, so a refused project never leaves its features pointing at nothing. Each item gets `published: {kind, op, id, queued, key, at}`
 or, when it failed, `result: {outcome, message, errors}` and stays in the review to fix and approve
-again. `last_approval.results` lists each file with its outcome and a link to its page. A queued item
+again. `last_approval.results` lists each file with its outcome and, once it is in the shared repo, a link to its page (none while it waits in the outbox: the page would say "Not defined"; the review tree shows the link once the item is published). A queued item
 follows its outbox entry (`key`). The publisher records how each entry left the outbox
 (`outbox/features/done/<key>.json`, kept a month): `published` marks the item published; `discarded`
 (e.g. Discard on the feature page), or no record, puts it back in the review to approve again. If the
