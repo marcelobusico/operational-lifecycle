@@ -5,9 +5,10 @@ and GitHub and proposes what LifeCycle should track: projects, features inside t
 features, and tasks linked to steps. This document is the contract between the screen that produces
 a proposal and the work that edits and publishes it.
 
-**Nothing is written.** The analysis reads Jira through Claude Code with read-only tools (the
+**The analysis writes nothing.** It reads Jira through Claude Code with read-only tools (the
 Atlassian connector's write tools are refused), reads GitHub with GET requests only, and keeps the
-proposal in memory on this machine. Nothing is added to LifeCycle-Data, Jira or GitHub.
+proposal in memory on this machine. Only **Approve** in the review (below) writes, and only to
+LifeCycle-Data; nothing is ever written to Jira or GitHub repositories other than LifeCycle-Data.
 
 ## Links it reads
 
@@ -93,7 +94,7 @@ one ("Search inside checkout history" next to "Checkout") is not. Duplicates are
 and projects LifeCycle last read from the shared repo; if it hasn't read them yet, the proposal says
 so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full read.
 
-## API (local only)
+## API: analysis (local only)
 
 - `POST /api/import/links {text}` → `{links, ai}`: what each link is, before anything is read.
 - `GET /api/import/ai` → `{available, provider, message}`.
@@ -102,6 +103,84 @@ so (`duplicates_checked: false`, `duplicates_note`) instead of starting a full r
 - `GET /api/import/analyze/<id>` → `{state: running|done|failed, phase: reading|analyzing|done|failed, sources, proposal, message}`.
   Analyses are kept in memory (the last five) while LifeCycle runs. 404 `{reason: replaced|unknown, message}`:
   `replaced` when newer analyses took its place, `unknown` otherwise (e.g. LifeCycle restarted).
+
+## Review and approve (`lifecycle.import-review/v1`)
+
+**Review and approve…** under a finished proposal turns it into an editable review, saved in
+`~/.lifecycle/import-review.json` (one per machine) as it is edited, so leaving the screen, a reload or
+a LifeCycle restart keeps the edits. Starting a review of another analysis asks first (409 `has_review`)
+while the current one has unpublished items that were edited or approved, or items waiting for the
+shared repo.
+
+Each item is the proposal item plus what the person can change: `level`, `parent`, `name`, `id`
+(projects and features: the file name), `description`, `owner`, `team` (steps), `target_date` and
+`depends_on` (features), `done_when` (steps), `evidence` (steps and tasks), `included` (excluded items
+stay in the review, unpublished) and `duplicate_choice` (`skip`, `create` or `merge`; an item marked
+`possible_duplicate` is blocked until the person chooses). `source_links`, `level_reason`,
+`original_level` and `possible_duplicate` are read-only.
+
+- `parent`: another item's `ref`, or `existing:<id>`: a defined project (for a feature) or a defined
+  feature (for a step, which adds the step to that feature). A feature's project is its parent.
+- `depends_on`: defined feature ids, or `ref:<ref>` for another proposed feature.
+- Changing the level re-parents the item: a feature turned into a step of another feature becomes one
+  of its steps (one file, not two). Children of an excluded or skipped item are not imported either.
+- A task is a PR, issue or ticket linked to a step (docs/terminology.md): its evidence goes on its step.
+- `merge` on a feature adds its steps and their evidence to the existing feature (one edit of that
+  file, no new file); a merged feature with no step left to add is an error (nothing to publish). On a
+  project, its features go into the existing project: the project item shows `merged` and is marked
+  published once each of its included features is in the shared repo (not while one waits in the
+  outbox). With none included there is nothing to add: Approve marks it so, never a load, so its choice
+  can still change until then. It goes back to unpublished if one of them comes back to the review.
+
+**Check** compiles the review into the drafts the New feature form sends (`src/import/approve.js`) and
+runs the same validation and AI product review (`src/features/review.js`) on each, against the defined
+features and projects plus the proposed ones. Each item gets `check: {state, errors, findings, reason,
+review_note, review_ran}`; `state` is `ready`, `invalid` (an error, shown on its field), `blocked` (an
+AI contradiction), `excluded`, `skipped` or `merged`. Ambiguities are shown as suggestions and don't block. A
+step or task is ready when the feature it lands in is. A new feature is not ready while its new project,
+or a proposed feature it depends on, is not ready (the error is on its `parent` or `depends_on`). A project or
+feature of this review that waits in the outbox counts as defined (a feature can go in that project or
+depend on that feature); a step can't be added to a feature that waits until it is published (on the next Refresh View once the repo is reachable; then Check). Without a reachable AI provider the review is
+reported as not run and valid items are ready. `plan` lists the files Approve would write.
+
+**Approve** (write access to LifeCycle-Data only; otherwise 403 `read_only` with the reason) refreshes
+the definitions (which retries the outbox), follows its outbox entries again (what that retry refused
+is back in the review, not counted as defined), checks again, then publishes the ready items through the feature publisher
+(`src/features/publish.js`): new projects first, then new features in dependency order, then additions
+to existing features; one commit per file under the person's GitHub identity ("from LifeCycle import"),
+with the conflict check. The review is saved after each file, so what was committed stays recorded
+if a later step fails (a failed re-read after publishing leaves `last_approval.note` and asks for a new
+Check). A task is marked with its step only if it was included and valid (its evidence went into the
+file). When the shared repo can't be reached they wait in the local outbox (projects
+too) and publish on a later refresh, in order. An entry that needs a new project or feature still in
+the outbox (waiting, or refused) stays waiting (a retry reports a refused one held back as
+`not_published`, a waiting one as `queued`), and a feature's project must exist when it is
+written, so a refused project never leaves its features pointing at nothing. Each item gets `published: {kind, op, id, queued, key, at}`
+or, when it failed, `result: {outcome, message, errors}` and stays in the review to fix and approve
+again. `last_approval.results` lists each file with its outcome and, once it is in the shared repo, a link to its page (none while it waits in the outbox: the page would say "Not defined"; the review tree shows the link once the item is published). A queued item
+follows its outbox entry (`key`). The publisher records how each entry left the outbox
+(`outbox/features/done/<key>.json`, kept a month): `published` marks the item published; `discarded`
+(e.g. Discard on the feature page), or no record, puts it back in the review to approve again. If the
+entry ends in a conflict or failure, the entry is dropped and the item is back in the review with the
+error. Entries are retried in the order they were made (their times on one machine are strictly
+increasing), so a project lands before its features and a feature before those that depend on it.
+Entries from an import that no review follows (it was discarded or replaced) are listed under the
+review as *Kept on this machine from an earlier import*, with Retry now (only that entry:
+`POST /api/features-outbox/retry {keys}`; not offered for a conflict) and Discard: a new project has
+no page of its own to show them. Check and Approve don't run while the screen's last edits are not
+saved (the server copy would be older).
+While a check or approve runs, edits, discard and starting another review are refused (409 `busy`), and
+the screen locks the fields.
+
+## API: review (local only)
+
+- `GET /api/import/review` → `{review, fresh, ready, busy, access, outbox}`; `fresh` is false after an edit
+  since the last check; `ready` counts the files Approve would write; `outbox` lists the import entries
+  no review follows (`{key, op, kind, name, state, message, created_at}`).
+- `POST /api/import/review {analysis_id, replace?}` → starts a review of a finished analysis.
+- `PUT /api/import/review {revision, edits: [{ref, ...fields}]}` → saves edits (409 when another window
+  saved a newer revision).
+- `POST /api/import/review/check`, `POST /api/import/review/approve` (→ `results`), `POST /api/import/review/discard`.
 
 ## Adding a source type
 

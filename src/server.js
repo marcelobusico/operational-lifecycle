@@ -19,6 +19,7 @@ import { installInfo } from './update/install.js';
 import { publishProject, deleteProject, updateProject } from './projects/create.js';
 import { createAppDefinition, updateAppDefinition, deleteAppDefinition } from './apps/edit.js';
 import { createImportService } from './import/service.js';
+import { createReviewStore } from './import/review-store.js';
 
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
@@ -30,7 +31,7 @@ function send(res, status, body, type = 'application/json; charset=utf-8') {
 
 // Reads a small JSON body. Writes only come from LifeCycle's own page: the body must be JSON (so a
 // cross-site form can't post) and a browser Origin, when sent, must be this server.
-async function readBody(req) {
+async function readBody(req, max = 100000) {
   const type = req.headers['content-type'] || '';
   if (!type.startsWith('application/json')) throw Object.assign(new Error('send JSON (content-type: application/json)'), { status: 415 });
   const origin = req.headers.origin;
@@ -38,7 +39,7 @@ async function readBody(req) {
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > 100000) throw Object.assign(new Error('request too large'), { status: 413 });
+    if (raw.length > max) throw Object.assign(new Error('request too large'), { status: 413 });
   }
   try {
     return raw ? JSON.parse(raw) : {};
@@ -86,6 +87,9 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
     }
     return r;
   }
+  // The import review (src/import/review-store.js): edited here, published through the feature publisher.
+  const reviewStore = createReviewStore({ app, importer, review: (built, featureDefs) => review(built, { featureDefs }) });
+  const REVIEW_STATUS = { started: 200, saved: 200, checked: 200, approved: 200, discarded: 200, has_review: 409, conflict: 409, busy: 409, invalid: 400, not_found: 404, read_only: 403 };
   const TEAM_STATUS = { published: 200, not_published: 202, conflict: 409, needs_decision: 409, confirm_unowned: 409, invalid: 400, not_found: 404, read_only: 403 };
   const FEATURE_STATUS = { published: 200, queued: 202, not_published: 202, conflict: 409, has_dependents: 409, invalid: 400, not_found: 404, read_only: 403 };
 
@@ -142,6 +146,32 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
             : 'This analysis is no longer available: analyses are kept only while LifeCycle runs, so it was probably restarted. Press Analyze again.' });
       }
       if (req.method === 'GET' && url.pathname === '/api/import/ai') return send(res, 200, importer.availability());
+      // Reviewing a proposal, then approving it: the only import step that writes to LifeCycle-Data,
+      // with the person's own GitHub identity, and only for people who can write to it.
+      if (url.pathname === '/api/import/review') {
+        if (req.method === 'GET') return send(res, 200, { ...reviewStore.get(), access: await app.featurePublisher.access() });
+        if (req.method === 'POST') {
+          const body = await readBody(req);
+          const r = reviewStore.start(typeof body.analysis_id === 'string' ? body.analysis_id : '', { replace: body.replace === true });
+          return send(res, REVIEW_STATUS[r.outcome] || 200, r);
+        }
+        if (req.method === 'PUT') {
+          const r = reviewStore.update(await readBody(req, 2000000));
+          return send(res, REVIEW_STATUS[r.outcome] || 200, r);
+        }
+      }
+      const rvm = url.pathname.match(/^\/api\/import\/review\/(check|approve|discard)$/);
+      if (req.method === 'POST' && rvm) {
+        await readBody(req);
+        let r;
+        if (rvm[1] === 'discard') r = reviewStore.discard();
+        else if (rvm[1] === 'check') r = await reviewStore.check();
+        else {
+          const access = await app.featurePublisher.access();
+          r = access.can_edit ? await reviewStore.approve() : { outcome: 'read_only', message: access.reason };
+        }
+        return send(res, REVIEW_STATUS[r.outcome] || 200, r);
+      }
       if (req.method === 'POST' && url.pathname === '/api/digest') {
         await readBody(req);
         return send(res, 200, await ask.digest({ via: 'app' }));
@@ -278,9 +308,12 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
         return send(res, TEAM_STATUS[r.outcome] || 200, r);
       }
       if (req.method === 'POST' && url.pathname === '/api/features-outbox/retry') {
-        await readBody(req);
+        // keys (optional): retry only these (the import screen's entries); a refresh still publishes
+        // whatever is waiting for the repo, as it always does.
+        const body = await readBody(req);
+        const keys = Array.isArray(body?.keys) ? body.keys.filter((k) => typeof k === 'string') : null;
         await app.refresh();
-        const results = await app.featurePublisher.flush(await app.definitionsNow(), { all: true });
+        const results = await app.featurePublisher.flush(await app.definitionsNow(), { all: true, keys });
         if (results.some((x) => x.outcome === 'published')) await app.refresh();
         return send(res, 200, { results, feature_outbox: listFeatureOutbox() });
       }

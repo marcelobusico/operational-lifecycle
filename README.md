@@ -417,8 +417,11 @@ and to GitHub repositories, PRs, issues or single files. Each link shows its typ
 **Analyze** reads them (never source code) and the AI provider set up for Ask proposes projects,
 features, steps and tasks, each with the reason for its level, the tickets and PRs that back it,
 and a warning when it looks like a feature that already exists. The screen lists what was read, what
-failed and why, and what the read limits left out. It only proposes: nothing is added to
-LifeCycle-Data, Jira or GitHub. Details: [docs/import-format.md](docs/import-format.md).
+failed and why, and what the read limits left out. **Review and approve…** then makes the proposal
+editable (fields, levels, parents, excluded items, what to do with possible duplicates), checks each
+item like the New feature form, and **Approve** publishes the ready ones, one commit per feature under
+your GitHub user; failed items stay in the review to fix. Edits are saved on this machine as you go.
+Nothing is written to Jira or GitHub. Details: [docs/import-format.md](docs/import-format.md).
 
 ## Status for other tools
 

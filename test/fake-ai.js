@@ -5,11 +5,13 @@ import http from 'node:http';
 import { extractMention } from '../src/ask/resolve.js';
 import { ruleIntent } from '../src/ask/answer.js';
 
-// Feature definition review: no findings, unless the test set state.reviewFindings (or the
-// definition says "CONTRADICTION", a marker tests can put in a done_when).
+// Feature definition review: no findings, unless the test set state.reviewFindings (a list, or a
+// function of the prompt returning one or null) or the definition says "CONTRADICTION", a marker
+// tests can put in a done_when.
 function reply(system, user, state) {
   if (system.includes('review a LifeCycle feature definition')) {
-    if (state.reviewFindings) return { findings: state.reviewFindings };
+    const set = typeof state.reviewFindings === 'function' ? state.reviewFindings(user) : state.reviewFindings;
+    if (set) return { findings: set };
     const m = user.match(/^\s*(?:- )?.*done_when: .*CONTRADICTION.*$/m);
     return { findings: m ? [{ kind: 'contradiction', field: 'steps[0].done_when', message: 'The done_when contradicts the step order.', suggestion: 'Reword it.' }] : [] };
   }
