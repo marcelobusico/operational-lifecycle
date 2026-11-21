@@ -215,8 +215,10 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
         const baseFeature = current ? validateDefinition(entry.file, current.text).feature : null;
         if (entry.op === 'update' && !baseFeature) throw new SourceError('conflict', `${entry.file} in the shared repo is not a valid definition any more.`, 409);
         const others = defs.featureDefs.filter((f) => f.id !== entry.feature_id);
+        // projects: when known, a project the edit sets must exist (a new project from the same import that
+        // was refused leaves its features unpublished instead of pointing at nothing).
         const built = buildFeatureFile({ draft: entry.draft, mode: entry.op, base: baseFeature ? { text: current.text, feature: baseFeature } : null,
-          features: baseFeature ? [...others, baseFeature] : others, invalidIds: defs.invalidIds });
+          features: baseFeature ? [...others, baseFeature] : others, invalidIds: defs.invalidIds, projects: defs.projectDefs || null });
         if (built.errors.length) {
           save({ ...entry, by, state: 'failed', message: built.errors.map((e) => `${e.field}: ${e.message}`).join(' '), last_try_at: now() });
           return { outcome: 'invalid', key: entry.key, errors: built.errors, message: 'Not published: the edit is no longer valid against the current definitions. It is kept on this machine.' };
@@ -300,13 +302,30 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
 
   // Retries edits waiting for the shared repo (all: also failed ones).
   // In order, so a feature published here counts for the ones after it (depends_on).
-  async function flush(defs, { all = false } = {}) {
+  // An entry that needs a new project or feature still in the outbox (not published yet, or refused)
+  // waits: it stays pending rather than being written against something that doesn't exist.
+  // keys: retry only these entries (the others still count for what waits).
+  async function flush(defs, { all = false, keys = null } = {}) {
     const results = [];
-    const known = { ...defs, featureDefs: [...defs.featureDefs] };
+    const known = { ...defs, featureDefs: [...defs.featureDefs], projectDefs: defs.projectDefs ? [...defs.projectDefs] : null };
+    const waitingProjects = new Set();
+    const waitingFeatures = new Set();
+    const hold = (e) => { if (e.op === 'create-project') waitingProjects.add(e.project_id); else if (e.op === 'create') waitingFeatures.add(e.feature_id); };
     for (const e of listFeatureOutbox()) {
-      if (!(e.state === 'pending' || (all && e.state === 'failed'))) continue;
+      const due = (e.state === 'pending' || (all && e.state === 'failed')) && (!keys || keys.includes(e.key));
+      const needs = e.op === 'create' || e.op === 'update'
+        ? [e.draft?.project && waitingProjects.has(e.draft.project) && `project ${e.draft.project}`,
+          ...(e.draft?.depends_on || []).filter((d) => waitingFeatures.has(d)).map((d) => `feature ${d}`)].filter(Boolean)
+        : [];
+      if (!due || needs.length) {
+        hold(e);
+        if (due) results.push({ outcome: 'queued', key: e.key, message: `Not published yet: it waits for the ${needs[0]}, which is not published yet.` });
+        continue;
+      }
       const r = await attempt(e, known);
+      if (r.outcome !== 'published') hold(e);
       if (r.feature) known.featureDefs = [...known.featureDefs.filter((f) => f.id !== r.feature.id), r.feature];
+      if (r.outcome === 'published' && e.op === 'create-project' && known.projectDefs) known.projectDefs.push({ id: e.project_id, name: e.name });
       results.push(r);
     }
     return results;
@@ -314,9 +333,9 @@ export function createFeaturePublisher({ config, github, whoAmI }) {
 
   function discard(key) {
     const e = readJson(entryFile(key));
-    if (!e) return;
-    logAlertEvent({ event: 'feature_edit_discarded', feature: subject(e), source: 'feature-edit', id: key });
-    drop(key);
+    if (e) logAlertEvent({ event: 'feature_edit_discarded', feature: subject(e), source: 'feature-edit', id: key });
+    if (!fs.existsSync(entryFile(key))) return;
+    drop(key); // also a file that can't be read any more
     recordOutcome(key, 'discarded');
   }
 

@@ -213,3 +213,40 @@ test('Discard keeps the review on screen, with the reason, when the server refus
   assert.equal(done.state.review, null);
   assert.ok(done.calls.includes('reload'), 'reloads to show what an earlier import left in the outbox');
 });
+
+test('a step of a feature still waiting in the outbox says it waits, and a feature may depend on that feature', async () => {
+  const r = createReview(proposal());
+  applyEdits(r, [{ ref: 'f3', duplicate_choice: 'skip' }, { ref: 'f2', depends_on: ['ref:f1'] }]);
+  for (const [ref, kind, id] of [['p1', 'project', 'wallet'], ['f1', 'feature', 'top-up']]) r.items.find((x) => x.ref === ref).published = { kind, op: 'create', id, queued: true, key: `k-${id}` };
+  // s1 came back to the review (its feature's entry is waiting; the step was added later).
+  const c = await checkReview(r, defs(), async () => ({ ran: false, findings: [], blocking: false }));
+  const by = (ref) => r.items.find((x) => x.ref === ref);
+  assert.equal(by('f2').check.state, 'ready', 'its project and the feature it depends on wait in the outbox');
+  assert.deepEqual(c.features.map((u) => u.id), ['refunds'], 'no edit of the waiting feature');
+  assert.deepEqual(by('s1').check.errors, [{ field: 'parent', message: 'its feature "Top up" is waiting for the shared repo; Check again once it is published' }]);
+});
+
+test('Check and Approve don\'t run on the older copy when the last edits could not be saved', async () => {
+  const js = await appJs();
+  const src = js.slice(js.indexOf('async function reviewAction'), js.indexOf('async function impOutboxAction'));
+  const posted = [];
+  const env = new Function('fetch', `let importReview = { review: { items: [] }, edits: 3, saved: 2, saveError: 'This review was changed in another window.' };
+    const confirm = () => true; const flushReview = async () => {}; const toast = () => {}; const load = () => {};
+    const render = () => {}; const rerenderReview = () => {}; const loadImportReview = () => {};
+    ${src}; return { reviewAction, state: () => importReview };`)(async (url) => { posted.push(url); return { ok: true, status: 200, json: async () => ({}) }; });
+  await env.reviewAction('approve');
+  assert.deepEqual(posted, [], 'nothing sent');
+  assert.match(env.state().error, /couldn't be saved \(This review was changed in another window\.\), so nothing was approved/);
+});
+
+test('the earlier-import list offers Retry only where retrying can help', async () => {
+  const js = await appJs();
+  const esc = (x) => String(x);
+  const html = new Function('esc', `${js.slice(js.indexOf('function impOutboxHtml'), js.indexOf('function importReviewHtml'))}; return impOutboxHtml;`)(esc)([
+    { key: 'a', kind: 'project', op: 'create-project', name: 'Wallet', state: 'conflict', message: 'taken' },
+    { key: 'b', kind: 'feature', op: 'create', name: 'Top up', state: 'failed', message: 'boom' },
+  ]);
+  assert.doesNotMatch(html, /data-ob-retry="a"/);
+  assert.match(html, /data-ob-retry="b"/);
+  assert.match(html, /data-ob-discard="a"/);
+});

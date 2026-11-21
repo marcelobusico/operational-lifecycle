@@ -549,7 +549,7 @@ const IMP_PARENT = { project: [], feature: ['project'], step: ['feature'], task:
 async function loadImportReview() {
   try {
     const r = await fetch('/api/import/review', { cache: 'no-store' }).then((x) => x.json());
-    importReview = { ...(importReview || {}), ...r, loaded: true };
+    importReview = { ...(importReview || {}), ...r, loaded: true, edits: 0, saved: 0 };
   } catch (err) { importReview = { review: null, loaded: true, error: `LifeCycle couldn't load the review: ${err.message}` }; }
   if (parseRoute().route === 'import') render();
 }
@@ -654,6 +654,7 @@ function impResultsHtml(a) {
   const what = (x) => (x.kind === 'project' ? `Project ${x.name}` : x.op === 'update' ? `Added to ${x.name}` : `Feature ${x.name}`);
   const queued = a.results.filter((x) => x.outcome === 'queued').length;
   return `<div class="card section imp-results" role="status" aria-live="polite"><h3>Last approval</h3>
+    ${a.note ? `<p class="small ferr" role="alert">${esc(a.note)}</p>` : ''}
     ${queued ? `<p class="small">The shared repo couldn't be reached: ${queued} ${queued === 1 ? 'item is' : 'items are'} kept on this machine and will be published on the next Refresh View once it is reachable.</p>` : ''}
     <ul>${a.results.map((x) => `<li class="${x.outcome === 'published' ? 'ok' : x.outcome === 'queued' ? '' : 'bad'}"><b>${esc(what(x))}</b>: ${esc(WORD[x.outcome] || x.outcome)}${x.link ? ` · <a href="${esc(x.link)}">open</a>` : ''}${x.outcome !== 'published' ? `<br><span class="small muted">${esc(x.message || '')}</span>` : ''}</li>`).join('')}</ul></div>`;
 }
@@ -678,11 +679,11 @@ function impTree(items) {
 // a new project waiting or refused has no page of its own, so they are listed here to retry or discard.
 function impOutboxHtml(list) {
   if (!list?.length) return '';
-  const label = { pending: 'Waiting for the shared repo', conflict: 'Not published: conflict', failed: 'Not published' };
+  const label = { pending: 'Waiting for the shared repo', conflict: 'Not published: conflict (someone else changed it; discard it, then import it again if still needed)', failed: 'Not published' };
   return `<div class="card section outbox imp-outbox"><div class="h">Kept on this machine from an earlier import</div><ul>${list.map((e) => `<li class="ob-${esc(e.state)}">
       <div><b>${esc(label[e.state] || e.state)}</b> · ${esc(e.kind === 'project' ? 'new project' : e.op === 'create' ? 'new feature' : 'feature edit')}: ${esc(e.name || e.key)}
         ${e.message ? `<div class="muted small">${esc(e.message)}</div>` : ''}</div>
-      <div class="aact"><button type="button" class="btn small" data-ob-retry>Retry now</button>
+      <div class="aact">${e.state === 'conflict' ? '' : `<button type="button" class="btn small" data-ob-retry="${esc(e.key)}">Retry now</button>`}
         <button type="button" class="btn small" data-ob-discard="${esc(e.key)}">Discard</button></div></li>`).join('')}</ul></div>`;
 }
 
@@ -723,9 +724,11 @@ function rerenderReview() {
 }
 
 // Saves the edits (debounced); a structural change re-draws the tree.
+// s.edits counts edits made, s.saved the count the server has: Check and Approve need them equal.
 function saveReview(redraw) {
   const s = importReview;
   s.fresh = false;
+  s.edits = (s.edits || 0) + 1;
   clearTimeout(s.timer);
   if (redraw) rerenderReview();
   s.timer = setTimeout(() => flushReview(), 500);
@@ -737,11 +740,13 @@ async function flushReview() {
   if (!r) return;
   s.saving = true;
   s.chain = (s.chain || Promise.resolve()).then(async () => {
+    const n = s.edits || 0;
     try {
       const out = await post('/api/import/review', { revision: r.revision, edits: r.items.map((it) => Object.fromEntries([['ref', it.ref], ...IMP_EDIT.map((k) => [k, it[k]])])) }, 'PUT');
       r.revision = out.review.revision;
       s.fresh = out.fresh; s.ready = out.ready; s.error = null;
-    } catch (err) { s.error = `Your last edits couldn't be saved (${err.message}). Reload to see what is saved.`; }
+      s.saved = Math.max(s.saved || 0, n);
+    } catch (err) { s.saveError = err.message; s.error = `Your last edits couldn't be saved (${err.message}). Reload to see what is saved.`; }
     s.saving = false;
     const bar = document.querySelector('#imp-review .imp-bar span');
     if (bar) bar.textContent = s.error ? '' : 'Changed since the last check';
@@ -753,8 +758,14 @@ async function flushReview() {
 async function reviewAction(kind) {
   const s = importReview;
   if (kind === 'discard' && !confirm('Discard this review and all its edits? Nothing already published is undone.')) return;
-  if (s.timer) await flushReview();
+  // Edits not saved yet are saved first; if that fails, nothing runs on the older copy on the server.
+  if (s.timer || (s.edits || 0) > (s.saved || 0)) await flushReview();
   else if (s.chain) await s.chain;
+  if (kind !== 'discard' && (s.edits || 0) > (s.saved || 0)) {
+    s.error = `Your last edits couldn't be saved (${s.saveError || 'unknown error'}), so nothing was ${kind === 'approve' ? 'approved' : 'checked'}: it would have used the older copy. Reload to see what is saved.`;
+    rerenderReview();
+    return;
+  }
   s.busy = kind; s.error = null;
   rerenderReview();
   try {
@@ -779,7 +790,10 @@ async function impOutboxAction(b) {
   const key = b.dataset.obDiscard;
   if (key && !confirm('Discard this? It has not been published and will be lost.')) return;
   b.disabled = true;
-  await post(key ? `/api/features-outbox/${encodeURIComponent(key)}/discard` : '/api/features-outbox/retry').catch((err) => toast(err.message, true));
+  const out = await (key ? post(`/api/features-outbox/${encodeURIComponent(key)}/discard`) : post('/api/features-outbox/retry', { keys: [b.dataset.obRetry] }))
+    .catch((err) => { toast(err.message, true); return null; });
+  const r = out?.results?.find((x) => x.key === b.dataset.obRetry);
+  if (r) toast(r.message || r.outcome, r.outcome !== 'published');
   await loadImportReview();
   rerenderReview();
 }
@@ -793,7 +807,7 @@ async function startReview(analysisId, replace = false) {
       return;
     }
     if (!res.ok) { toast(out.message || out.error || `HTTP ${res.status}`, true); return; }
-    importReview = { ...(importReview || {}), review: out.review, fresh: out.fresh, ready: out.ready, loaded: true };
+    importReview = { ...(importReview || {}), review: out.review, fresh: out.fresh, ready: out.ready, loaded: true, edits: 0, saved: 0 };
     render();
     reviewAction('check');
   } catch (err) { toast(err.message, true); }
@@ -820,7 +834,7 @@ function wireReview(root) {
     const b = ev.target.closest('button');
     if (!b) return;
     if (b.dataset.rv) return reviewAction(b.dataset.rv);
-    if (b.hasAttribute('data-ob-retry') || b.dataset.obDiscard) return impOutboxAction(b);
+    if (b.dataset.obRetry || b.dataset.obDiscard) return impOutboxAction(b);
     if (b.dataset.evDel !== undefined) { const it = itemOf(b); if (it) { it.evidence = it.evidence.filter((_, i) => i !== Number(b.dataset.evDel)); saveReview(true); } }
     if (b.hasAttribute('data-ev-add')) addEvidence(b);
   });

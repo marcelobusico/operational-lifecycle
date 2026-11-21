@@ -8,7 +8,7 @@
 import fs from 'node:fs';
 import { paths, writeJson } from '../config.js';
 import { listFeatureOutbox, featureOutboxOutcome } from '../features/publish.js';
-import { createReview, applyEdits, checkReview, contentKey, publishOrder, errorTarget } from './approve.js';
+import { createReview, applyEdits, checkReview, contentKey, publishOrder, errorTarget, waitingDefs } from './approve.js';
 
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
@@ -21,10 +21,31 @@ export function createReviewStore({ app, importer, review }) {
   // unknown end puts the item back in the review with the reason (a conflict's entry is dropped: the
   // review keeps the edit, so Approve can publish it again; a Check shows one that is already in the
   // shared repo as already defined). Not while a check or approve runs: it saves the copy it loaded.
+  // A project merged into an existing one is done once each of its included features is in the shared
+  // repo (not just waiting in the outbox); with none included, there is nothing to add. Undone if one
+  // of them comes back to the review. Returns whether anything changed.
+  function settleMerged(r) {
+    let changed = false;
+    for (const it of r.items.filter((x) => x.level === 'project' && x.included && x.duplicate_choice === 'merge' && x.possible_duplicate?.kind === 'project')) {
+      const kids = r.items.filter((x) => x.parent === it.ref && x.included && !(x.possible_duplicate && x.duplicate_choice === 'skip'));
+      const done = kids.every((x) => x.published && !x.published.queued);
+      if (done && !it.published) {
+        it.published = { kind: 'project', op: 'merge', id: it.possible_duplicate.id, queued: false, at: new Date().toISOString() };
+        it.result = { outcome: 'published', message: kids.length ? `Its features are in the existing project ${it.possible_duplicate.name}.` : `Nothing to add to the existing project ${it.possible_duplicate.name}: none of its features is included.` };
+        changed = true;
+      } else if (!done && it.published?.op === 'merge') {
+        it.published = null;
+        it.result = null;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   function sync(r) {
-    if (busy) return r;
-    const queued = r?.items.filter((it) => it.published?.queued && it.published.key) || [];
-    if (!queued.length) return r;
+    if (busy || !r) return r;
+    const queued = r.items.filter((it) => it.published?.queued && it.published.key);
+    if (!queued.length) { if (settleMerged(r)) save(r); return r; }
     const entries = new Map(listFeatureOutbox().map((e) => [e.key, e]));
     const drop = new Set();
     const back = (it, outcome, message) => { it.published = null; it.result = { outcome, message, errors: [] }; };
@@ -46,11 +67,10 @@ export function createReviewStore({ app, importer, review }) {
         back(it, 'not_published', 'LifeCycle can\'t tell whether this was published. Check again: if it is in the shared repo, it shows as already defined.');
       }
     }
-    if (queued.some((it) => !it.published?.queued)) {
-      for (const key of drop) app.featurePublisher.discard(key);
-      r.checked_key = null; // check again before approving
-      save(r);
-    }
+    const moved = queued.some((it) => !it.published?.queued);
+    for (const key of drop) app.featurePublisher.discard(key);
+    if (moved) r.checked_key = null; // check again before approving
+    if (settleMerged(r) || moved) save(r);
     return r;
   }
   const load = () => sync(readJson(paths.importReview()));
@@ -132,10 +152,11 @@ export function createReviewStore({ app, importer, review }) {
     } finally { busy = null; }
   }
 
-  // Marks the items of one published file with the outcome (and the tasks under its steps).
-  function record(r, refs, outcome) {
+  // Marks the items of one published file with the outcome, and the tasks under its steps whose
+  // evidence went into that file (included and valid: c is the check the file was built from).
+  function record(r, refs, outcome, c) {
     const all = new Set(refs);
-    for (const it of r.items) if (it.level === 'task' && all.has(it.parent)) all.add(it.ref);
+    for (const it of r.items) if (it.level === 'task' && all.has(it.parent) && it.included && !c.status.has(it.ref) && !c.problems.has(it.ref)) all.add(it.ref);
     for (const it of r.items) if (all.has(it.ref)) Object.assign(it, outcome(it));
   }
 
@@ -149,9 +170,14 @@ export function createReviewStore({ app, importer, review }) {
       await app.refresh(); // check and publish against the definitions as they are now
       const defs = await app.definitionsNow();
       const c = await check(r, defs);
-      const local = { ...defs, featureDefs: [...defs.featureDefs], projectDefs: [...(defs.projectDefs || [])], files: defs.files };
+      // What this review already sent to the outbox counts as defined (its features go after it there).
+      const waiting = waitingDefs(r);
+      const local = { ...defs, featureDefs: [...defs.featureDefs, ...waiting.features.filter((w) => !defs.featureDefs.some((f) => f.id === w.id))],
+        projectDefs: [...(defs.projectDefs || []), ...waiting.projects.filter((w) => !(defs.projectDefs || []).some((p) => p.id === w.id))], files: defs.files };
       const results = [];
       const at = new Date().toISOString();
+      // Saved after each file, so what was committed is on disk even if a later step throws.
+      r.last_approval = { at, results };
       const newProjects = new Map(c.projects.map((p) => [p.draft.id, p.draft.name]));
       const createdProjects = new Set();
       const newFeatures = new Map(c.features.filter((u) => u.op === 'create').map((u) => [u.id, u.draft.name]));
@@ -167,7 +193,8 @@ export function createReviewStore({ app, importer, review }) {
         results.push({ kind: 'project', op: 'create', id: p.draft.id, name: p.draft.name, refs: [p.ref], outcome: res.outcome, message: res.message, link: ok ? `#/project/${p.draft.id}` : null });
         record(r, [p.ref], () => (ok
           ? { published: { kind: 'project', op: 'create', id: p.draft.id, queued: res.outcome === 'queued', key: res.key || null, at }, result: { outcome: res.outcome, message: res.message } }
-          : { result: { outcome: res.outcome, message: res.message, errors: (res.errors || []).map((e) => ({ field: e.field, message: e.message })) } }));
+          : { result: { outcome: res.outcome, message: res.message, errors: (res.errors || []).map((e) => ({ field: e.field, message: e.message })) } }), c);
+        save(r);
       }
 
       for (const u of publishOrder(c.features.filter((x) => x.ready))) {
@@ -196,23 +223,21 @@ export function createReviewStore({ app, importer, review }) {
         const errors = (res.errors || []).map((e) => { const [ref, field] = errorTarget(u, e.field); return { ref, field, message: e.message }; });
         record(r, u.refs, (it) => (ok
           ? { published: { kind: 'feature', op: u.op, id: u.id, queued: res.outcome === 'queued', key: res.key || null, at }, result: { outcome: res.outcome, message: res.message } }
-          : { result: { outcome: res.outcome, message: res.message, errors: errors.filter((e) => e.ref === it.ref).map(({ field, message }) => ({ field, message })) } }));
+          : { result: { outcome: res.outcome, message: res.message, errors: errors.filter((e) => e.ref === it.ref).map(({ field, message }) => ({ field, message })) } }), c);
+        save(r);
       }
+      settleMerged(r);
+      save(r);
 
-      // A project merged into an existing one is done once none of its features is left to publish.
-      for (const it of r.items.filter((x) => x.level === 'project' && x.included && !x.published && x.duplicate_choice === 'merge' && x.possible_duplicate?.kind === 'project')) {
-        const kids = r.items.filter((x) => x.parent === it.ref && x.included);
-        if (kids.every((x) => x.published || x.duplicate_choice === 'skip')) {
-          it.published = { kind: 'project', op: 'merge', id: it.possible_duplicate.id, queued: false, at };
-          it.result = { outcome: 'published', message: `Its features are in the existing project ${it.possible_duplicate.name}.` };
-        }
+      // What is now in LifeCycle-Data: re-read it so the Roadmap shows the new features. If that fails,
+      // what was published is already saved; the review just needs a new Check.
+      try {
+        if (results.some((x) => x.outcome === 'published')) await app.refresh();
+        await check(r, await app.definitionsNow());
+      } catch (err) {
+        r.checked_key = null;
+        r.last_approval.note = `Published as listed, but LifeCycle couldn't read the shared repo again (${err.message}). Press Check.`;
       }
-
-      r.last_approval = { at, results };
-      // What is now in LifeCycle-Data: re-read it so the Roadmap shows the new features.
-      if (results.some((x) => x.outcome === 'published')) await app.refresh();
-      const after = await app.definitionsNow();
-      await check(r, after);
       save(r);
       return { outcome: 'approved', results, ...view(r) };
     } finally { busy = null; }

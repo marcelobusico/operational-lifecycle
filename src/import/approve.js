@@ -125,7 +125,7 @@ export function compileReview(review, defs) {
     if (it.parent.startsWith(EXISTING)) return { kind: 'existing', id: it.parent.slice(EXISTING.length) };
     const p = byRef.get(it.parent);
     if (!p) return { kind: 'missing' };
-    if (p.published) return { kind: 'existing', id: p.published.id };
+    if (p.published) return { kind: 'existing', id: p.published.id, waiting: p.published.queued ? p : null };
     return { kind: 'ref', item: p };
   }
 
@@ -202,7 +202,7 @@ export function compileReview(review, defs) {
 
   // Steps, in proposal order, each with its own evidence and its tasks'.
   const unitOfFeature = (p) => {
-    if (!p) return null;
+    if (!p || p.waiting) return null; // a feature still in the outbox has no file to add steps to yet
     if (p.kind === 'existing') return updateUnit(p.id);
     if (p.kind !== 'ref' || p.item.level !== 'feature') return null;
     const f = p.item;
@@ -214,7 +214,8 @@ export function compileReview(review, defs) {
     const p = parentOf(it);
     const u = unitOfFeature(p);
     if (!u) {
-      if (!(p?.kind === 'ref' && problems.has(p.item.ref))) problem(it.ref, 'parent', p?.kind === 'existing' ? `"${p.id}" is not a defined feature; pick another` : 'a step belongs to a feature: pick one');
+      if (p?.waiting) problem(it.ref, 'parent', `its feature "${p.waiting.name}" is waiting for the shared repo; Check again once it is published`);
+      else if (!(p?.kind === 'ref' && problems.has(p.item.ref))) problem(it.ref, 'parent', p?.kind === 'existing' ? `"${p.id}" is not a defined feature; pick another` : 'a step belongs to a feature: pick one');
       continue;
     }
     if (u.op === 'create' && !u.refs.includes(it.ref)) u.refs.push(it.ref);
@@ -249,6 +250,17 @@ export function errorTarget(unit, field) {
   return [unit.refs[0], 'name'];
 }
 
+// Projects and features of this review approved while the shared repo was unreachable: they wait in
+// the outbox, so other items may name them (a feature in that project, a dependency on that feature).
+export function waitingDefs(review) {
+  const q = review.items.filter((it) => it.published?.queued);
+  return {
+    projects: q.filter((it) => it.published.kind === 'project' && it.published.op === 'create').map((it) => ({ id: it.published.id, name: it.name })),
+    features: q.filter((it) => it.published.kind === 'feature' && it.published.op === 'create' && it.level === 'feature').map((it) => ({ id: it.published.id, name: it.name, owner: it.owner || '',
+      project: null, targetDate: null, dependsOn: [], services: [], flags: [], steps: [], rampConditions: [], file: `features/${it.published.id}.yaml` })),
+  };
+}
+
 // The draft feature as the other proposed features see it (dependency checks, AI review).
 const stub = (u) => ({ id: u.id, name: u.draft.name, owner: u.draft.owner, project: u.draft.project || null, targetDate: u.draft.target_date || null,
   dependsOn: u.draft.depends_on, services: [], flags: [], steps: [], rampConditions: [], file: `features/${u.id}.yaml` });
@@ -257,6 +269,9 @@ const stub = (u) => ({ id: u.id, name: u.draft.name, owner: u.draft.owner, proje
 // Returns the compiled units, each with { built, errors, review, ready }, and writes each item's
 // check ({ state, errors, findings, review_note }) on the review.
 export async function checkReview(review, defs, reviewFn) {
+  const waiting = waitingDefs(review);
+  defs = { ...defs, projectDefs: [...(defs.projectDefs || []), ...waiting.projects.filter((w) => !(defs.projectDefs || []).some((p) => p.id === w.id))],
+    featureDefs: [...(defs.featureDefs || []), ...waiting.features.filter((w) => !(defs.featureDefs || []).some((f) => f.id === w.id))] };
   const c = compileReview(review, defs);
   const proposedProjects = c.projects.map((p) => ({ id: p.draft.id, name: p.draft.name }));
   const projectsAll = [...(defs.projectDefs || []), ...proposedProjects];

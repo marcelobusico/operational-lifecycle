@@ -128,7 +128,9 @@ stay in the review, unpublished) and `duplicate_choice` (`skip`, `create` or `me
 - `merge` on a feature adds its steps and their evidence to the existing feature (one edit of that
   file, no new file); a merged feature with no step left to add is an error (nothing to publish). On a
   project, its features go into the existing project: the project item shows `merged` and is marked
-  published once its features are.
+  published once each of its included features is in the shared repo (not while one waits in the
+  outbox; with none included there is nothing to add). It goes back to unpublished if one of them
+  comes back to the review.
 
 **Check** compiles the review into the drafts the New feature form sends (`src/import/approve.js`) and
 runs the same validation and AI product review (`src/features/review.js`) on each, against the defined
@@ -136,15 +138,22 @@ features and projects plus the proposed ones. Each item gets `check: {state, err
 review_note, review_ran}`; `state` is `ready`, `invalid` (an error, shown on its field), `blocked` (an
 AI contradiction), `excluded`, `skipped` or `merged`. Ambiguities are shown as suggestions and don't block. A
 step or task is ready when the feature it lands in is. A new feature is not ready while its new project,
-or a proposed feature it depends on, is not ready (the error is on its `parent` or `depends_on`). Without a reachable AI provider the review is
+or a proposed feature it depends on, is not ready (the error is on its `parent` or `depends_on`). A project or
+feature of this review that waits in the outbox counts as defined (a feature can go in that project or
+depend on that feature); a step can't be added to a feature that waits, until it is published. Without a reachable AI provider the review is
 reported as not run and valid items are ready. `plan` lists the files Approve would write.
 
 **Approve** (write access to LifeCycle-Data only; otherwise 403 `read_only` with the reason) refreshes
 the definitions, checks again, then publishes the ready items through the feature publisher
 (`src/features/publish.js`): new projects first, then new features in dependency order, then additions
 to existing features; one commit per file under the person's GitHub identity ("from LifeCycle import"),
-with the conflict check. When the shared repo can't be reached they wait in the local outbox (projects
-too) and publish on a later refresh, in order. Each item gets `published: {kind, op, id, queued, key, at}`
+with the conflict check. The review is saved after each file, so what was committed stays recorded
+if a later step fails (a failed re-read after publishing leaves `last_approval.note` and asks for a new
+Check). A task is marked with its step only if it was included and valid (its evidence went into the
+file). When the shared repo can't be reached they wait in the local outbox (projects
+too) and publish on a later refresh, in order. An entry that needs a new project or feature still in
+the outbox (waiting, or refused) stays waiting, and a feature's project must exist when it is
+written, so a refused project never leaves its features pointing at nothing. Each item gets `published: {kind, op, id, queued, key, at}`
 or, when it failed, `result: {outcome, message, errors}` and stays in the review to fix and approve
 again. `last_approval.results` lists each file with its outcome and a link to its page. A queued item
 follows its outbox entry (`key`). The publisher records how each entry left the outbox
@@ -154,8 +163,10 @@ entry ends in a conflict or failure, the entry is dropped and the item is back i
 error. Entries are retried in the order they were made (their times on one machine are strictly
 increasing), so a project lands before its features and a feature before those that depend on it.
 Entries from an import that no review follows (it was discarded or replaced) are listed under the
-review as *Kept on this machine from an earlier import*, with Retry now and Discard: a new project has
-no page of its own to show them.
+review as *Kept on this machine from an earlier import*, with Retry now (only that entry:
+`POST /api/features-outbox/retry {keys}`; not offered for a conflict) and Discard: a new project has
+no page of its own to show them. Check and Approve don't run while the screen's last edits are not
+saved (the server copy would be older).
 While a check or approve runs, edits, discard and starting another review are refused (409 `busy`), and
 the screen locks the fields.
 

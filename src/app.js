@@ -130,7 +130,7 @@ export function createApp({ config = loadConfig(), token, flagsmithApiKey = flag
     }
     // Feature edits waiting for the shared repo, the same way.
     if (!defs.stale && listFeatureOutbox().some((e) => e.state === 'pending')) {
-      const results = await featurePublisher.flush({ featureDefs: parsed.features, invalidIds: parsed.invalidIds });
+      const results = await featurePublisher.flush({ featureDefs: parsed.features, invalidIds: parsed.invalidIds, projectDefs: parsed.projects });
       if (results.some((r) => r.outcome === 'published')) ({ defs, parsed } = await readDefinitions());
     }
     const { features, projects, services, teams, apps, storeSnapshots, flagSnapshots, jiraSnapshots, changes, invalid, invalidIds } = parsed;

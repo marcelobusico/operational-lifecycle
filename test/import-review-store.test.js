@@ -122,3 +122,84 @@ test('outbox entries from an import that no review follows are listed with the r
   writeEntry({ key: 'k-proj', op: 'create-project', kind: 'project', name: 'Wallet', via: 'import', state: 'pending', created_at: new Date().toISOString() });
   assert.deepEqual(store.get().outbox.map((e) => e.key), ['old-proj'], 'entries the review follows are shown on its items instead');
 });
+
+const storeWith = (items, featurePublisher, more = {}) => createReviewStore({
+  app: { definitionsNow: async () => ({ ...defs(), ...more }), refresh: async () => {}, featurePublisher, ...(more.app || {}) },
+  importer: { progress: () => ({ state: 'done', proposal: { items } }) }, review: noAi });
+
+test('what Approve published is saved even when a later step throws', async () => {
+  let n = 0;
+  const fp = { submit: async (body) => { if (body.op !== 'create-project') throw new Error('disk full'); return { outcome: 'published', key: 'k-p' }; }, discard: () => {} };
+  const store = createReviewStore({ app: { definitionsNow: async () => defs(), refresh: async () => {}, featurePublisher: fp }, importer, review: noAi });
+  store.start('a1');
+  await assert.rejects(store.approve(), /disk full/);
+  const p1 = store.get().review.items.find((x) => x.ref === 'p1');
+  assert.equal(p1.published?.id, 'wallet', 'the project committed before the error is recorded');
+
+  // The re-read after publishing fails: the approval is still saved, with a note to check again.
+  const ok = { submit: async (body) => ({ outcome: 'published', key: `k-${body.op}` }), discard: () => {} };
+  const store2 = createReviewStore({ app: { definitionsNow: async () => { n += 1; if (n > 1) throw new Error('repo read failed'); return defs(); }, refresh: async () => {}, featurePublisher: ok }, importer, review: noAi });
+  store2.discard();
+  store2.start('a1');
+  const r = await store2.approve();
+  assert.equal(r.outcome, 'approved');
+  assert.match(r.review.last_approval.note, /repo read failed/);
+  assert.ok(store2.get().review.items.every((x) => x.published), 'all saved as published');
+});
+
+test('tasks that were excluded or invalid are not marked published with their step', async () => {
+  const items = [
+    { ref: 'p1', level: 'project', name: 'Wallet', owner: 'bo' },
+    { ref: 'f1', level: 'feature', name: 'Top up', parent: 'p1', owner: 'bo' },
+    { ref: 's1', level: 'step', name: 'API', parent: 'f1', owner: 'cy', done_when: 'deployed' },
+    { ref: 't1', level: 'task', name: 'PR 7', parent: 's1', evidence: [{ source: 'github', type: 'pr', repo: 'acme/api', number: 7 }] },
+    { ref: 't2', level: 'task', name: 'PR 8', parent: 's1', evidence: [{ source: 'github', type: 'pr', repo: 'acme/api', number: 8 }] },
+    { ref: 't3', level: 'task', name: 'Ticket', parent: 's1', evidence: [] },
+  ];
+  const ok = { submit: async (body) => ({ outcome: 'published', key: `k-${body.op}` }), discard: () => {} };
+  const store = storeWith(items, ok);
+  const { review } = store.start('a1');
+  store.update({ revision: review.revision, edits: [{ ref: 't2', included: false }] });
+  const r = await store.approve();
+  const by = (ref) => r.review.items.find((x) => x.ref === ref);
+  assert.ok(by('s1').published);
+  assert.ok(by('t1').published, 'its evidence is in the file');
+  assert.equal(by('t2').published, null, 'excluded');
+  assert.equal(by('t3').published, null, 'no evidence: invalid');
+});
+
+test('a project merged into an existing one is done only once its features are in the shared repo, not while they wait', async () => {
+  const items = [
+    { ref: 'p1', level: 'project', name: 'Wallet', owner: 'bo', possible_duplicate: { id: 'wallet', name: 'Wallet', kind: 'project' } },
+    { ref: 'f1', level: 'feature', name: 'Top up', parent: 'p1', owner: 'bo' },
+    { ref: 's1', level: 'step', name: 'API', parent: 'f1', owner: 'cy', done_when: 'deployed' },
+  ];
+  const store = storeWith(items, { submit: async () => ({ outcome: 'queued', key: 'k-f1' }), discard: () => {} }, { projectDefs: [{ id: 'wallet', name: 'Wallet' }] });
+  const { review } = store.start('a1');
+  store.update({ revision: review.revision, edits: [{ ref: 'p1', duplicate_choice: 'merge' }] });
+  const r = await store.approve();
+  assert.equal(r.review.items.find((x) => x.ref === 'f1').published.queued, true);
+  assert.equal(r.review.items.find((x) => x.ref === 'p1').published, null, 'not done while its feature waits');
+  writeOutcome('k-f1', 'published');
+  const p1 = store.get().review.items.find((x) => x.ref === 'p1');
+  assert.equal(p1.published.op, 'merge');
+  assert.match(p1.result.message, /in the existing project Wallet/);
+});
+
+test('features of a project still waiting in the outbox can be checked and approved; they go after it', async () => {
+  const submitted = [];
+  let first = true;
+  const fp = { submit: async (body, ctx) => {
+    submitted.push([body.op, body.draft.project || null, (ctx.defs.projectDefs || []).map((p) => p.id)]);
+    if (body.op === 'create-project') return { outcome: 'queued', key: 'k-p' };
+    if (first) { first = false; return { outcome: 'invalid', errors: [{ field: 'name', message: 'too vague' }], message: 'Not published.' }; }
+    return { outcome: 'queued', key: 'k-f' };
+  }, discard: () => {} };
+  const store = storeWith(importer.progress().proposal.items, fp);
+  store.start('a1');
+  await store.approve();
+  const c = await store.check();
+  assert.equal(c.review.items.find((x) => x.ref === 'f1').check.state, 'ready', 'its project waits in the outbox: that is enough');
+  await store.approve();
+  assert.deepEqual(submitted.at(-1), ['create', 'wallet', ['wallet']]);
+});

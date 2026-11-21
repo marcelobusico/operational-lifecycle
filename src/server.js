@@ -308,9 +308,12 @@ export function createServer(app = createApp(), ask = createAskService({ app }),
         return send(res, TEAM_STATUS[r.outcome] || 200, r);
       }
       if (req.method === 'POST' && url.pathname === '/api/features-outbox/retry') {
-        await readBody(req);
+        // keys (optional): retry only these (the import screen's entries); a refresh still publishes
+        // whatever is waiting for the repo, as it always does.
+        const body = await readBody(req);
+        const keys = Array.isArray(body?.keys) ? body.keys.filter((k) => typeof k === 'string') : null;
         await app.refresh();
-        const results = await app.featurePublisher.flush(await app.definitionsNow(), { all: true });
+        const results = await app.featurePublisher.flush(await app.definitionsNow(), { all: true, keys });
         if (results.some((x) => x.outcome === 'published')) await app.refresh();
         return send(res, 200, { results, feature_outbox: listFeatureOutbox() });
       }
